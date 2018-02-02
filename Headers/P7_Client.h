@@ -406,6 +406,9 @@ public:
     //Share  - function to share current P7 object in address space of
     //         the current process, see documentation for details
     virtual tBOOL             Share(const tXCHAR *i_pName)                  = 0;
+
+    // Flush need to make log synchronous.
+    virtual tBOOL             Flush()                                       = 0;
 };
 
 

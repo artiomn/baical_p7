@@ -1328,12 +1328,6 @@ tBOOL CClText::Flush()
 
     m_bConnected = FALSE;
 
-    if (m_pSink)
-    {
-        delete m_pSink;
-        m_pSink = NULL;
-    }
-
     LOCK_EXIT(m_hCS);
     //unlock
     ////////////////////////////////////////////////////////////////////////////
