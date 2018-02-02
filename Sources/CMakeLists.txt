@@ -12,8 +12,12 @@ file(GLOB headers ../Headers/*.h ../Shared/*.h ${platform_include_dir}/*.h)
 file(GLOB src *.cpp *.h)
 
 include_directories(AFTER SYSTEM include ../Shared ../Headers ${platform_include_dir})
+
+set(CMAKE_CXX_FLAGS -fPIC)
+
 add_library(${PROJECT_NAME} SHARED ${headers} ${src})
 add_library(${PROJECT_NAME}_static STATIC ${headers} ${src})
+
 
 target_link_libraries(${PROJECT_NAME} dl rt pthread)
 
