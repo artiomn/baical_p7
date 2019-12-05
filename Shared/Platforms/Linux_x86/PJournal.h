@@ -38,11 +38,11 @@ class CJournal
 {
     volatile tINT32    m_iRCnt;
     tLOCK              m_hCS;
-    tUINT64            m_pCount[IJournal::eLEVEL_COUNT];
-    IJournal::eLevel   m_eVerbosity;
-    tUINT32            m_pLength;
-    tXCHAR            *m_pBuffer;
-    tXCHAR             m_pName[IJournal::eLEVEL_COUNT][16];
+    tUINT64            m_pCount[IJournal::eLEVEL_COUNT] = {static_cast<IJournal::eLevel>(0UL)};
+    IJournal::eLevel   m_eVerbosity = static_cast<IJournal::eLevel>(0UL);
+    tUINT32            m_pLength = 0;
+    tXCHAR            *m_pBuffer = nullptr;
+    tXCHAR             m_pName[IJournal::eLEVEL_COUNT][16] = {0};
 public:
     ////////////////////////////////////////////////////////////////////////////
     CJournal()
