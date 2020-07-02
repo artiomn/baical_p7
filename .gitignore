@@ -1,0 +1,42 @@
+*.sublime-project
+*.sublime-workspace
+.idea
+.cache
+.tox
+
+*.test.yml
+*.pyc
+*pb2*.py
+
+.DS_Store
+__pycache__
+.pytest_cache
+
+
+# C++.
+
+a.out
+*.o
+*.obj
+*.lib
+/build/**
+/build*/**
+*.autosave
+
+# Vim swap.
+
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# Session
+Session.vim
+
+# Temporary
+.netrwhist
+*~
+# Persistent undo
+[._]*.un~
+
