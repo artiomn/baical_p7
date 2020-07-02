@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -23,7 +23,7 @@ using System.Runtime.InteropServices;
 namespace P7
 {
     /// <summary>
-    /// shell for P7 library, depends on P7Client_64.dll or P7Client_32.dll
+    /// shell for P7 library, depends on p7-shared.dll
     /// 
     ///                       +-------------------+                            
     ///                       |       Sink        |                            
@@ -61,36 +61,32 @@ namespace P7
     /// </summary>
     public static class Dll
     {
-    #if DEBUG
-        public const string DLL_NAME_32 = "P7x32d.dll";
-        public const string DLL_NAME_64 = "P7x64d.dll";
-    #else
-        public const string DLL_NAME_32 = "P7x32.dll";
-        public const string DLL_NAME_64 = "P7x64.dll";
-    #endif
+        public const string DLL_NAME = "p7-shared.dll";
 
         #region internal class defines and DLL imports
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Exceptional_Flush", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void P7_Exceptional_Flush32();
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Exceptional_Flush", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void P7_Exceptional_Flush();
 
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Exceptional_Flush", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void P7_Exceptional_Flush64();
+
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Flush", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void P7_Flush();
         #endregion
 
         /// <summary>
-        ///Application crash processor static function for P7                               
-        ///See documentation for details.
+        ///Application crash processor static function for P7, allows to flush all internal buffers and stop all P7
+        ///activity. See documentation for details.
         /// </summary>
         public static void Exceptional_Buffers_Flush()
         {
-            if (8 == IntPtr.Size)
-            {
-                P7_Exceptional_Flush32();
-            }
-            else
-            {
-                P7_Exceptional_Flush64();
-            }
+            P7_Exceptional_Flush();
+        }                              
+
+        /// <summary>
+        ///Flush P7 internal buffers by request, async. function. See documentation for details.
+        /// </summary>
+        public static void Buffers_Flush()
+        {
+            P7_Flush();
         }                              
     }
 
@@ -104,66 +100,41 @@ namespace P7
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Client_Create 
-        private delegate System.IntPtr fnP7_Client_Create(String i_sArgs);
-
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Client_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Client_Create32([MarshalAs(UnmanagedType.LPWStr)]String i_sArgs);
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Client_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Client_Create64([MarshalAs(UnmanagedType.LPWStr)]String i_sArgs);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Client_Create([MarshalAs(UnmanagedType.LPWStr)]String i_sArgs);
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Client_Get_Shared 
-        private delegate System.IntPtr fnP7_Client_Get_Shared(String i_sName);
-
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Client_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Client_Get_Shared32([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Client_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Client_Get_Shared64([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Client_Get_Shared([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Client_Share 
-        private delegate System.UInt32 fnP7_Client_Share(System.IntPtr i_hClient,
-                                                         String        i_sName
-                                                        );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Client_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Client_Share32(System.IntPtr i_hClient,
-                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                             );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Client_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Client_Share64(System.IntPtr i_hClient,
-                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                             );
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Client_Share(System.IntPtr i_hClient,
+                                                            [MarshalAs(UnmanagedType.LPWStr)]String i_sName
+                                                           );
+
+        ////////////////////////////////////////////////////////////////////////
+        //P7_Client_Flush
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Flush", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Client_Flush(System.IntPtr i_hClient);
 
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Client_Add_Ref 
-        private delegate System.Int32 fnP7_Client_Add_Ref(System.IntPtr i_hClient);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Client_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Client_Add_Ref32(System.IntPtr i_hClient);
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Client_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Client_Add_Ref64(System.IntPtr i_hClient);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Client_Add_Ref(System.IntPtr i_hClient);
 
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Client_Release 
-        private delegate System.Int32 fnP7_Client_Release(System.IntPtr i_hClient);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Client_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Client_Release32(System.IntPtr i_hClient);
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Client_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Client_Release64(System.IntPtr i_hClient);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Client_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Client_Release(System.IntPtr i_hClient);
 
         #endregion
 
-        private System.IntPtr  m_hHandle            = IntPtr.Zero;
-        fnP7_Client_Create     P7_Client_Create     = null;
-        fnP7_Client_Get_Shared P7_Client_Get_Shared = null;
-        fnP7_Client_Share      P7_Client_Share      = null;
-        fnP7_Client_Add_Ref    P7_Client_Add_Ref    = null;
-        fnP7_Client_Release    P7_Client_Release    = null;
+        private System.IntPtr  m_hHandle = IntPtr.Zero;
 
         /// <summary>
         ///Creates new P7  client,  client  is  used  as  transport  engine  for 
@@ -172,8 +143,6 @@ namespace P7
         /// </summary>
         public Client(String i_sArgs)
         {
-            Initialize();
-
             m_hHandle = P7_Client_Create(i_sArgs);
 
             if (IntPtr.Zero == m_hHandle)
@@ -188,7 +157,6 @@ namespace P7
         ///</summary>
         private Client(System.IntPtr i_hHandle)
         {
-            Initialize();
             m_hHandle = i_hHandle;
         }
 
@@ -206,28 +174,6 @@ namespace P7
         }
 
         /// <summary>
-        /// Initialize delegates by proper functions 32/64 bits
-        /// </summary>
-        private void Initialize()
-        {
-            if (8 == IntPtr.Size)
-            {
-                P7_Client_Create     = P7_Client_Create64;
-                P7_Client_Get_Shared = P7_Client_Get_Shared64;
-                P7_Client_Share      = P7_Client_Share64;
-                P7_Client_Add_Ref    = P7_Client_Add_Ref64;
-                P7_Client_Release    = P7_Client_Release64;
-            }
-            else
-            {
-                P7_Client_Create     = P7_Client_Create32;
-                P7_Client_Get_Shared = P7_Client_Get_Shared32;
-                P7_Client_Share      = P7_Client_Share32;
-                P7_Client_Add_Ref    = P7_Client_Add_Ref32;
-                P7_Client_Release    = P7_Client_Release32;
-            }
-        }
-        /// <summary>
         ///This functions allows you to get P7 client instance if it was created  
         ///by   someone   else   inside   current   process   and  shared  using 
         ///P7::Client::Share() function. If no instance  was  registered  inside 
@@ -240,14 +186,7 @@ namespace P7
         {
             System.IntPtr l_hHandle = System.IntPtr.Zero;
 
-            if (8 == IntPtr.Size)
-            {
-                l_hHandle = P7_Client_Get_Shared64(i_sName);
-            }
-            else
-            {
-                l_hHandle = P7_Client_Get_Shared32(i_sName);
-            }
+            l_hHandle = P7_Client_Get_Shared(i_sName);
 
             if (IntPtr.Zero != l_hHandle)
             {
@@ -268,6 +207,17 @@ namespace P7
 
             return (0 != l_dwReturn) ? true : false;
         }
+
+        /// <summary>
+        /// function allows to flush (deliver) not  delivered/saved  P7  
+        /// buffers  for current client. Please do not use this function often, it may 
+        /// reduce performance.
+        /// </summary>
+        public void Flush()
+        {
+            P7_Client_Flush(m_hHandle);
+        }
+
 
         /// <summary>
         /// Give access to P7 client handle
@@ -326,142 +276,70 @@ namespace P7
         #region internal class defines and DLL imports
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Create
-        private delegate System.IntPtr fnP7_Telemetry_Create(System.IntPtr i_hClient,
-                                                             String i_sName,
-                                                             System.IntPtr i_pConf);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Telemetry_Create32(System.IntPtr i_hClient, 
-                                                                  [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                  System.IntPtr i_pConf
-                                                                 );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Telemetry_Create64(System.IntPtr i_hClient,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Telemetry_Create(System.IntPtr i_hClient, 
                                                                   [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
                                                                   System.IntPtr i_pConf
                                                                  );
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Create
-        private delegate System.IntPtr fnP7_Telemetry_Get_Shared(String i_sName);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Telemetry_Get_Shared32([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Telemetry_Get_Shared64([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Telemetry_Get_Shared([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Share
-        private delegate System.UInt32 fnP7_Telemetry_Share(System.IntPtr i_hTelemetry,
-                                                            String i_sName
-                                                           );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Share32(System.IntPtr i_hTelemetry,
-                                                                 [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                                );
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Share64(System.IntPtr i_hTelemetry,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Telemetry_Share(System.IntPtr i_hTelemetry,
                                                                  [MarshalAs(UnmanagedType.LPWStr)]String i_sName
                                                                 );
 
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Create_Counter
-        private delegate System.UInt32 fnP7_Telemetry_Create_Counter(System.IntPtr i_hTelemetry,
-                                                                     String i_sName,
-                                                                     System.Int64 i_llMin,
-                                                                     System.Int64 i_llMax,
-                                                                     System.Int64 i_llAlarm,
-                                                                     System.Byte i_bOn,
-                                                                     ref System.Byte o_rCounter_ID
-                                                                    );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Create_Counter", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Create_Counter32(System.IntPtr i_hTelemetry,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Create_Counter", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Telemetry_Create_Counter(System.IntPtr i_hTelemetry,
                                                                           [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                          System.Int64    i_llMin,
-                                                                          System.Int64    i_llMax,
-                                                                          System.Int64    i_llAlarm,
-                                                                          System.Byte     i_bOn,
-                                                                          ref System.Byte o_rCounter_ID
-                                                                         );
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Create_Counter", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Create_Counter64(System.IntPtr i_hTelemetry,
-                                                                          [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                          System.Int64    i_llMin,
-                                                                          System.Int64    i_llMax,
-                                                                          System.Int64    i_llAlarm,
-                                                                          System.Byte     i_bOn,
-                                                                          ref System.Byte o_rCounter_ID
+                                                                          System.Double     i_dbMin,
+                                                                          System.Double     i_dbAlarmMin,
+                                                                          System.Double     i_dbMax,
+                                                                          System.Double     i_dbAlarmMax,
+                                                                          System.Int32      i_bOn,
+                                                                          ref System.UInt16 o_rCounter_ID
                                                                          );
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Put_Value
-        private delegate System.UInt32 fnP7_Telemetry_Put_Value(System.IntPtr i_hTelemetry,
-                                                                System.Byte i_bCounter_ID,
-                                                                System.Int64 i_llValue
-                                                               );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Put_Value32(System.IntPtr i_hTelemetry,
-                                                                     System.Byte   i_bCounter_ID,
-                                                                     System.Int64  i_llValue
-                                                                    );
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Put_Value64(System.IntPtr i_hTelemetry,
-                                                                     System.Byte i_bCounter_ID,
-                                                                     System.Int64 i_llValue
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Telemetry_Put_Value(System.IntPtr i_hTelemetry,
+                                                                     System.UInt16 i_wCounter_ID,
+                                                                     System.Double i_dbValue
                                                                     );
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Find_Counter
-        private delegate System.UInt32 fnP7_Telemetry_Find_Counter(System.IntPtr i_hTelemetry,
-                                                                   [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                   ref System.Byte o_rCounter_ID
-                                                                  );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Find_Counter32(System.IntPtr i_hTelemetry,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Telemetry_Find_Counter(System.IntPtr i_hTelemetry,
                                                                         [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                        ref System.Byte o_rCounter_ID
-                                                                       );
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Put_Value", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Telemetry_Find_Counter64(System.IntPtr i_hTelemetry,
-                                                                        [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                        ref System.Byte o_rCounter_ID
+                                                                        ref System.UInt16 o_rCounter_ID
                                                                        );
 
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Add_Ref
-        private delegate System.Int32 fnP7_Telemetry_Add_Ref(System.IntPtr i_hTelemetry);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Telemetry_Add_Ref32(System.IntPtr i_hTelemetry);
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Telemetry_Add_Ref64(System.IntPtr i_hTelemetry);
-
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Telemetry_Add_Ref(System.IntPtr i_hTelemetry);
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Telemetry_Release
-        private delegate System.Int32 fnP7_Telemetry_Release(System.IntPtr i_hTelemetry);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Telemetry_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Telemetry_Release32(System.IntPtr i_hTelemetry);
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Telemetry_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Telemetry_Release64(System.IntPtr i_hTelemetry);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Telemetry_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Telemetry_Release(System.IntPtr i_hTelemetry);
         #endregion
 
         /// <summary>
         /// P7 telemetry handle
         /// </summary>
-        private System.IntPtr                 m_hHandle                   = IntPtr.Zero;
-        private fnP7_Telemetry_Create         P7_Telemetry_Create         = null;
-        private fnP7_Telemetry_Get_Shared     P7_Telemetry_Get_Shared     = null;
-        private fnP7_Telemetry_Share          P7_Telemetry_Share          = null;
-        private fnP7_Telemetry_Create_Counter P7_Telemetry_Create_Counter = null;
-        private fnP7_Telemetry_Put_Value      P7_Telemetry_Put_Value      = null;
-        private fnP7_Telemetry_Find_Counter   P7_Telemetry_Find_Counter   = null;
-        private fnP7_Telemetry_Add_Ref        P7_Telemetry_Add_Ref        = null;
-        private fnP7_Telemetry_Release        P7_Telemetry_Release        = null;
+        private System.IntPtr m_hHandle = IntPtr.Zero;
 
         /// <summary>
         /// creates new instance of P7 Telemetry object
@@ -471,8 +349,6 @@ namespace P7
         /// <param name="i_sName">Name of the telemetry channel</param>
         public Telemetry(P7.Client i_pClient, String i_sName)
         {
-            Initialize();
-
             if (    (null != i_pClient) 
                  || (IntPtr.Zero != i_pClient.Handle)
                )
@@ -496,7 +372,6 @@ namespace P7
         /// <param name="i_hHandle">P7 client handle</param>
         private Telemetry(System.IntPtr i_hHandle)
         {
-            Initialize();
             m_hHandle = i_hHandle;
         }
 
@@ -514,36 +389,6 @@ namespace P7
 
 
         /// <summary>
-        /// Initialize delegates by proper functions 32/64 bits
-        /// </summary>
-        private void Initialize()
-        {
-            if (8 == IntPtr.Size)
-            {
-                P7_Telemetry_Create         = P7_Telemetry_Create64;
-                P7_Telemetry_Get_Shared     = P7_Telemetry_Get_Shared64;
-                P7_Telemetry_Share          = P7_Telemetry_Share64;
-                P7_Telemetry_Create_Counter = P7_Telemetry_Create_Counter64;
-                P7_Telemetry_Put_Value      = P7_Telemetry_Put_Value64;
-                P7_Telemetry_Find_Counter   = P7_Telemetry_Find_Counter64;
-                P7_Telemetry_Add_Ref        = P7_Telemetry_Add_Ref64;
-                P7_Telemetry_Release        = P7_Telemetry_Release64;
-            }
-            else
-            {
-                P7_Telemetry_Create         = P7_Telemetry_Create32;
-                P7_Telemetry_Get_Shared     = P7_Telemetry_Get_Shared32;
-                P7_Telemetry_Share          = P7_Telemetry_Share32;
-                P7_Telemetry_Create_Counter = P7_Telemetry_Create_Counter32;
-                P7_Telemetry_Put_Value      = P7_Telemetry_Put_Value32;
-                P7_Telemetry_Find_Counter   = P7_Telemetry_Find_Counter32;
-                P7_Telemetry_Add_Ref        = P7_Telemetry_Add_Ref32;
-                P7_Telemetry_Release        = P7_Telemetry_Release32;
-            }
-        }
-
-
-        /// <summary>
         ///This functions allows you to get P7  telemetry  instance  if  it  was 
         ///created by someone else  inside  current  process  and  shared  using 
         ///P7::Telemetry::Share() function. If no instance was registered inside 
@@ -555,14 +400,7 @@ namespace P7
         {
             System.IntPtr l_hHandle = System.IntPtr.Zero;
 
-            if (8 == IntPtr.Size)
-            {
-                l_hHandle = P7_Telemetry_Get_Shared64(i_sName);
-            }
-            else
-            {
-                l_hHandle = P7_Telemetry_Get_Shared32(i_sName);
-            }
+            l_hHandle = P7_Telemetry_Get_Shared(i_sName);
 
             if (IntPtr.Zero != l_hHandle)
             {
@@ -587,23 +425,24 @@ namespace P7
         }
 
         /// <summary>
-        /// creates new telemetry counter, max amount of counters per telemtetry
-        /// instance - 256
+        /// creates new telemetry counter.
         /// See documentation for details.
         /// </summary>
-        public bool Create(String          i_sName,
-                           System.Int64    i_llMin,
-                           System.Int64    i_llMax,
-                           System.Int64    i_llAlarm,
-                           System.Byte     i_bOn,
-                           ref System.Byte o_rCounter_ID
+        public bool Create(String            i_sName,
+                           System.Double     i_dbMin,
+                           System.Double     i_dbAlarmMin,
+                           System.Double     i_dbMax,
+                           System.Double     i_dbAlarmMax,
+                           System.Int32      i_bOn,
+                           ref System.UInt16 o_rCounter_ID
                           )
         {
             System.UInt32 l_dwReturn = P7_Telemetry_Create_Counter(m_hHandle,
                                                                    i_sName,
-                                                                   i_llMin,
-                                                                   i_llMax,
-                                                                   i_llAlarm,
+                                                                   i_dbMin,
+                                                                   i_dbAlarmMin,
+                                                                   i_dbMax,
+                                                                   i_dbAlarmMax,
                                                                    i_bOn,
                                                                    ref o_rCounter_ID
                                                                   );
@@ -615,11 +454,11 @@ namespace P7
         /// add counter value
         /// See documentation for details.
         /// </summary>
-        public bool Add(System.Byte i_bCounter_ID, System.Int64 i_llValue)
+        public bool Add(System.UInt16 i_wCounter_ID, System.Double i_dbValue)
         {
             System.UInt32 l_dwReturn = P7_Telemetry_Put_Value(m_hHandle,
-                                                              i_bCounter_ID,
-                                                              i_llValue
+                                                              i_wCounter_ID,
+                                                              i_dbValue
                                                              );
 
             return (0 != l_dwReturn) ? true : false;
@@ -629,7 +468,7 @@ namespace P7
         /// find counter ID by name
         /// See documentation for details.
         /// </summary>
-        public bool Find_Counter(String i_sName, ref System.Byte o_rCounter_ID)
+        public bool Find_Counter(String i_sName, ref System.UInt16 o_rCounter_ID)
         {
             System.UInt32 l_dwReturn = P7_Telemetry_Find_Counter(m_hHandle,
                                                                  i_sName,
@@ -681,132 +520,65 @@ namespace P7
         #region internal class defines and DLL imports
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Create
-        private delegate System.IntPtr fnP7_Trace_Create(System.IntPtr i_hClient,
-                                                         String i_sName
-                                                        );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Create32(System.IntPtr i_hClient,
-                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Trace_Create(System.IntPtr i_hClient,
+                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
+                                                              System.IntPtr i_pOpt
                                                              );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Create", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Create64(System.IntPtr i_hClient,
-                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                             );
-
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Get_Shared
-        private delegate System.IntPtr fnP7_Trace_Get_Shared(String i_sName);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Get_Shared32([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Get_Shared64([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
-
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Get_Shared", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Trace_Get_Shared([MarshalAs(UnmanagedType.LPWStr)]String i_sName);
 
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Share
-        private delegate System.UInt32 fnP7_Trace_Share(System.IntPtr i_hTrace,
-                                                        String i_sName
-                                                       );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Share32(System.IntPtr i_hTrace,
-                                                             [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                            );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Share64(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Share", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Trace_Share(System.IntPtr i_hTrace,
                                                              [MarshalAs(UnmanagedType.LPWStr)]String i_sName
                                                             );
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Set_Verbosity
-        private delegate void fnP7_Trace_Set_Verbosity(System.IntPtr i_hTrace,
-                                                       System.IntPtr i_hModule,
-                                                       System.UInt32 i_dwVerbosity
-                                                      );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Set_Verbosity", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void P7_Trace_Set_Verbosity32(System.IntPtr i_hTrace,
-                                                            System.IntPtr i_hModule,
-                                                            System.UInt32 i_dwVerbosity
-                                                           );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Set_Verbosity", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void P7_Trace_Set_Verbosity64(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Set_Verbosity", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void P7_Trace_Set_Verbosity(System.IntPtr i_hTrace,
                                                             System.IntPtr i_hModule,
                                                             System.UInt32 i_dwVerbosity
                                                            );
 
+        ////////////////////////////////////////////////////////////////////////
+        //P7_Trace_Get_Verbosity
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Get_Verbosity", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Trace_Get_Verbosity(System.IntPtr i_hTrace,
+                                                                     System.IntPtr i_hModule
+                                                                    );
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Register_Thread
-        private delegate System.UInt32 fnP7_Trace_Register_Thread(System.IntPtr i_hTrace,
-                                                                  [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                  System.UInt32 i_dwThreadId
-                                                                 );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Register_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Register_Thread32(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Register_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Trace_Register_Thread(System.IntPtr i_hTrace,
                                                                        [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
                                                                        System.UInt32 i_dwThreadId
                                                                       );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Register_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Register_Thread64(System.IntPtr i_hTrace,
-                                                                       [MarshalAs(UnmanagedType.LPWStr)]String i_sName,
-                                                                       System.UInt32 i_dwThreadId
-                                                                      );
-
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Unregister_Thread
-        private delegate System.UInt32 fnP7_Trace_Unregister_Thread(System.IntPtr i_hTrace,
-                                                                    System.UInt32 i_dwThreadId
-                                                                   );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Unregister_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Unregister_Thread32(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Unregister_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Trace_Unregister_Thread(System.IntPtr i_hTrace,
                                                                          System.UInt32 i_dwThreadId
                                                                          );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Unregister_Thread", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Unregister_Thread64(System.IntPtr i_hTrace,
-                                                                         System.UInt32 i_dwThreadId
-                                                                        );
-
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Register_Module
-        private delegate System.IntPtr fnP7_Trace_Register_Module(System.IntPtr i_hTrace,
-                                                                  [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                                 );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Register_Module", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Register_Module32(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Register_Module", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.IntPtr P7_Trace_Register_Module(System.IntPtr i_hTrace,
                                                                        [MarshalAs(UnmanagedType.LPWStr)]String i_sName
                                                                       );
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Register_Module", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.IntPtr P7_Trace_Register_Module64(System.IntPtr i_hTrace,
-                                                                       [MarshalAs(UnmanagedType.LPWStr)]String i_sName
-                                                                      );
-
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Managed
-        private delegate System.UInt32 fnP7_Trace_Managed(System.IntPtr i_hTrace,
-                                                          System.UInt16 i_wTrace_ID,
-                                                          System.UInt32 i_dwLevel,
-                                                          System.IntPtr i_hModule,
-                                                          System.UInt16 i_wLine,
-                                                          String        i_sFile,
-                                                          String        i_sFunction,
-                                                          String        i_sMessage
-                                                         );
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Managed", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Managed32(System.IntPtr i_hTrace,
-                                                               System.UInt16 i_wTrace_ID,
-                                                               System.UInt32 i_dwLevel,
-                                                               System.IntPtr i_hModule,
-                                                               System.UInt16 i_wLine,
-                                                               [MarshalAs(UnmanagedType.LPWStr)]String i_sFile,
-                                                               [MarshalAs(UnmanagedType.LPWStr)]String i_sFunction,
-                                                               [MarshalAs(UnmanagedType.LPWStr)]String i_sMessage
-                                                              );
-
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Managed", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.UInt32 P7_Trace_Managed64(System.IntPtr i_hTrace,
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Managed", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.UInt32 P7_Trace_Managed(System.IntPtr i_hTrace,
                                                                System.UInt16 i_wTrace_ID,
                                                                System.UInt32 i_dwLevel,
                                                                System.IntPtr i_hModule,
@@ -819,19 +591,13 @@ namespace P7
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Add_Ref
-        private delegate System.Int32 fnP7_Trace_Add_Ref(System.IntPtr i_hTrace);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Trace_Add_Ref32(System.IntPtr i_hTrace);
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Trace_Add_Ref64(System.IntPtr i_hTrace);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Add_Ref", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Trace_Add_Ref(System.IntPtr i_hTrace);
 
         ////////////////////////////////////////////////////////////////////////
         //P7_Trace_Release
-        private delegate System.Int32 fnP7_Trace_Release(System.IntPtr i_hTrace);
-        [DllImport(Dll.DLL_NAME_32, EntryPoint = "P7_Trace_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Trace_Release32(System.IntPtr i_hTrace);
-        [DllImport(Dll.DLL_NAME_64, EntryPoint = "P7_Trace_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern System.Int32 P7_Trace_Release64(System.IntPtr i_hTrace);
+        [DllImport(Dll.DLL_NAME, EntryPoint = "P7_Trace_Release", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern System.Int32 P7_Trace_Release(System.IntPtr i_hTrace);
         #endregion
 
         /// <summary>
@@ -852,24 +618,8 @@ namespace P7
         /// <summary>
         /// P7 trace handle
         /// </summary>
-        private System.IntPtr                m_hHandle                  = IntPtr.Zero;
-        private fnP7_Trace_Create            P7_Trace_Create            = null;       
-
-        private fnP7_Trace_Get_Shared        P7_Trace_Get_Shared        = null;   
-        private fnP7_Trace_Share             P7_Trace_Share             = null;        
-        
-        private fnP7_Trace_Set_Verbosity     P7_Trace_Set_Verbosity     = null;
-
-        private fnP7_Trace_Register_Thread   P7_Trace_Register_Thread   = null;
-        private fnP7_Trace_Unregister_Thread P7_Trace_Unregister_Thread = null;
-
-        private fnP7_Trace_Register_Module   P7_Trace_Register_Module   = null;
-        
-        private fnP7_Trace_Managed           P7_Trace_Managed           = null;      
-
-        private fnP7_Trace_Add_Ref           P7_Trace_Add_Ref           = null;
-        private fnP7_Trace_Release           P7_Trace_Release           = null; 
-        private const Int32                  m_iStackFrame              = 2;  
+        private System.IntPtr m_hHandle     = IntPtr.Zero;
+        private const Int32   m_iStackFrame = 2;
 
 
         /// <summary>
@@ -878,12 +628,11 @@ namespace P7
         /// </summary>
         public Traces(P7.Client i_pClient, String i_sName)
         {
-            Initialize();
             if (    (null != i_pClient)
                  || (IntPtr.Zero != i_pClient.Handle)
                )
             {
-                m_hHandle = P7_Trace_Create(i_pClient.Handle, i_sName);
+                m_hHandle = P7_Trace_Create(i_pClient.Handle, i_sName, IntPtr.Zero);
             }
             else
             {
@@ -902,7 +651,6 @@ namespace P7
         /// <param name="i_hHandle">P7 client handle</param>
         private Traces(System.IntPtr i_hHandle)
         {
-            Initialize();
             m_hHandle = i_hHandle;
         }
 
@@ -919,39 +667,6 @@ namespace P7
         }
 
         /// <summary>
-        /// Initialize delegates by proper functions 32/64 bits
-        /// </summary>
-        private void Initialize()
-        {
-            if (8 == IntPtr.Size)
-            {
-                P7_Trace_Create            = P7_Trace_Create64;
-                P7_Trace_Get_Shared        = P7_Trace_Get_Shared64;
-                P7_Trace_Share             = P7_Trace_Share64;
-                P7_Trace_Set_Verbosity     = P7_Trace_Set_Verbosity64;
-                P7_Trace_Register_Thread   = P7_Trace_Register_Thread64;
-                P7_Trace_Unregister_Thread = P7_Trace_Unregister_Thread64;
-                P7_Trace_Register_Module   = P7_Trace_Register_Module64;
-                P7_Trace_Managed           = P7_Trace_Managed64;
-                P7_Trace_Add_Ref           = P7_Trace_Add_Ref64;
-                P7_Trace_Release           = P7_Trace_Release64;
-            }
-            else
-            {
-                P7_Trace_Create            = P7_Trace_Create32;
-                P7_Trace_Get_Shared        = P7_Trace_Get_Shared32;
-                P7_Trace_Share             = P7_Trace_Share32;
-                P7_Trace_Set_Verbosity     = P7_Trace_Set_Verbosity32;
-                P7_Trace_Register_Thread   = P7_Trace_Register_Thread32;
-                P7_Trace_Unregister_Thread = P7_Trace_Unregister_Thread32;
-                P7_Trace_Register_Module   = P7_Trace_Register_Module32;
-                P7_Trace_Managed           = P7_Trace_Managed32;
-                P7_Trace_Add_Ref           = P7_Trace_Add_Ref32;
-                P7_Trace_Release           = P7_Trace_Release32;
-            }
-        }
-
-        /// <summary>
         ///This functions allows you to get P7 trace instance if it was  created
         ///by someone else inside current process and shared using Traces::Share
         ///function. If no instance was  registered  inside  current  process - 
@@ -963,14 +678,7 @@ namespace P7
         {
             System.IntPtr l_hHandle = System.IntPtr.Zero;
 
-            if (8 == IntPtr.Size)
-            {
-                l_hHandle = P7_Trace_Get_Shared64(i_sName);
-            }
-            else
-            {
-                l_hHandle = P7_Trace_Get_Shared32(i_sName);
-            }
+            l_hHandle = P7_Trace_Get_Shared(i_sName);
 
             if (IntPtr.Zero != l_hHandle)
             {
@@ -1004,6 +712,15 @@ namespace P7
         {
             P7_Trace_Set_Verbosity(m_hHandle, i_hModule, (UInt32)i_eLevel);
         }
+
+        /// <summary>
+        /// Get minimal trace verbosity. See documentation for details.
+        /// </summary>
+        public Traces.Level Get_Verbosity(System.IntPtr i_hModule)
+        {
+            return (Traces.Level)P7_Trace_Get_Verbosity(m_hHandle, i_hModule);
+        }
+
 
         /// <summary>
         /// function used to specify name for current/special thread.
@@ -1049,41 +766,38 @@ namespace P7
                         String        i_sMessage
                        )
         {
-            StackTrace    l_cSt      = new StackTrace(true);
-            StackFrame    l_cSf      = l_cSt.GetFrame(i_dwStackFrame);
-            System.UInt32 l_dwReturn = 0;
+            StackTrace    l_cSt          = new StackTrace(true);
+            StackFrame    l_cSf          = l_cSt.GetFrame(i_dwStackFrame);
+            System.UInt32 l_dwReturn     = 0;
+            int           l_iLineNumber  = 0;
+            string        l_sMethodName  = null;
+            string        l_sFileName    = null;
 
             if (null != l_cSf)
             {
-                string l_sMn = (null != l_cSf.GetMethod()) ? l_cSf.GetMethod().Name : "<Optimized>";
+                System.Reflection.MethodBase l_cMethod = l_cSf.GetMethod();
 
-                 l_dwReturn = P7_Trace_Managed(m_hHandle,
-                                               i_wTraceId,
-                                               (UInt32)i_eLevel,
-                                               i_hModule,
-                                               (UInt16)l_cSf.GetFileLineNumber(),
-                                               l_cSf.GetFileName(),
-                                               l_sMn,
-                                               i_sMessage
-                                              );
-            }
-            else
-            {
-                l_dwReturn = P7_Trace_Managed(m_hHandle,
-                                              i_wTraceId,
-                                              (UInt32)i_eLevel,
-                                              i_hModule,
-                                              0,
-                                              "<Optimized>",
-                                              "<Optimized>",
-                                              i_sMessage
-                                             );
+                if (null != l_cMethod)
+                {
+                    l_sMethodName = l_cMethod.Name;
+                }
+
+                l_sFileName   = l_cSf.GetFileName();
+                l_iLineNumber = l_cSf.GetFileLineNumber();
             }
 
+            l_dwReturn = P7_Trace_Managed(m_hHandle,
+                                          i_wTraceId,
+                                          (UInt32)i_eLevel,
+                                          i_hModule,
+                                          (UInt16)l_iLineNumber,
+                                          (null != l_sFileName) ? l_sFileName : "<optimized>",
+                                          (null != l_sMethodName) ? l_sMethodName : "<optimized>",
+                                          i_sMessage
+                                         );
 
-
-            l_cSt = null;
             l_cSf = null;
+            l_cSt = null;
 
             return (0 != l_dwReturn) ? true : false;
         }

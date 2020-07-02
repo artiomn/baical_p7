@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -16,6 +16,9 @@
 // License along with this library.                                            /
 //                                                                             /
 ////////////////////////////////////////////////////////////////////////////////
+#ifndef PSIGNAL_H
+#define PSIGNAL_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "signal.h"
@@ -27,25 +30,17 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <features.h>
+#include "ISignal.h"
 
 //Linux signal handling article:
 //http://www.linuxprogrammingblog.com/all-about-linux-signals?page=show
-
-typedef void (__cdecl *fnCrashHandler)(int i_iType, void *i_pContext);
-
-struct stChContext
-{
-    volatile int   iInstalled;
-    volatile int   iProcessed;
-    fnCrashHandler pUserHandler;
-};
 
 static stChContext g_stContext = {0};
 
 
 ////////////////////////////////////////////////////////////////////////////////
 //Get_Signal_Text
-static const char *ChGetSignalText(int i_iSignal, siginfo_t* i_pSigInfo)
+static __attribute__ ((unused)) const char *ChGetSignalText(int i_iSignal, siginfo_t* i_pSigInfo)
 {
     if (i_iSignal == SIGBUS)
     {
@@ -90,8 +85,12 @@ static const char *ChGetSignalText(int i_iSignal, siginfo_t* i_pSigInfo)
 
 ////////////////////////////////////////////////////////////////////////////////
 //ChHandler
-static void ChHandler(int i_iSignal, siginfo_t *i_pSigInfo, void *i_pContext)
+static __attribute__ ((unused)) void ChHandler(int        i_iSignal, 
+                                               siginfo_t *i_pSigInfo, 
+                                               void      *i_pContext
+                                              )
 {
+    UNUSED_ARG(i_pContext);
     if (g_stContext.iProcessed)
     {
         return;
@@ -99,34 +98,27 @@ static void ChHandler(int i_iSignal, siginfo_t *i_pSigInfo, void *i_pContext)
 
     g_stContext.iProcessed = 1;
 
+    const char *l_pText = ChGetSignalText(i_iSignal, i_pSigInfo);
+
     if (g_stContext.pUserHandler)
     {
-        g_stContext.pUserHandler(0, NULL);
+        g_stContext.pUserHandler((eCrashCode)(eCrashSignal + i_iSignal), l_pText, g_stContext.pUserContext);
     }
 
-    printf("Process has been terminated by signal {%s}\n",
-           ChGetSignalText(i_iSignal, i_pSigInfo));
+    printf("Process has been terminated by signal {%s}\n", l_pText);
 }//ChHandler
 
 
 ////////////////////////////////////////////////////////////////////////////////
 //ChInstall
-static tBOOL ChInstall(fnCrashHandler i_fnHandler)
+static __attribute__ ((unused)) tBOOL ChInstallPrivate()
 {
     struct sigaction l_sSignal;
     struct sigaction l_sSignalPipe;
     tBOOL            l_bReturn  = TRUE;
 
-    if (g_stContext.iInstalled)
-    {
-        return FALSE;
-    }
-
-    g_stContext.iProcessed   = 0;
-    g_stContext.pUserHandler = i_fnHandler;
-
     ////////////////////////////////////////////////////////////////////////////
-    // installing singla handilgn ...
+    // installing signal handling ...
     memset(&l_sSignalPipe, 0, sizeof(l_sSignalPipe));
     memset(&l_sSignal, 0, sizeof(l_sSignal));
 
@@ -145,6 +137,32 @@ static tBOOL ChInstall(fnCrashHandler i_fnHandler)
     l_bReturn &= (sigaction(SIGBUS,  &l_sSignal, NULL) == 0);
     l_bReturn &= (sigaction(SIGSEGV, &l_sSignal, NULL) == 0);
 
+    if (!l_bReturn)
+    {
+        printf("ERROR: can't initialize signal handler");
+    }
+    
+    return l_bReturn;
+}//ChInstall
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//ChInstall
+static __attribute__ ((unused)) tBOOL ChInstall()
+{
+    tBOOL l_bReturn  = TRUE;
+
+    if (g_stContext.iInstalled)
+    {
+        return FALSE;
+    }
+
+    memset(&g_stContext, 0, sizeof(g_stContext));
+    g_stContext.iProcessed = 0;
+
+    l_bReturn = ChInstallPrivate();
+
     if (l_bReturn)
     {
         g_stContext.iInstalled = 1;
@@ -159,8 +177,41 @@ static tBOOL ChInstall(fnCrashHandler i_fnHandler)
 
 
 ////////////////////////////////////////////////////////////////////////////////
+//ChSetHandler
+static __attribute__ ((unused)) tBOOL ChSetHandler(fnCrashHandler i_fnHandler)
+{
+    if (!g_stContext.iInstalled)
+    {
+        return FALSE;
+    }
+
+    g_stContext.pUserHandler = i_fnHandler;
+
+    return TRUE;
+}//ChSetHandler
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//ChSetContext
+static __attribute__ ((unused)) tBOOL ChSetContext(void *i_pContext)
+{
+    if (!g_stContext.iInstalled)
+    {
+        return FALSE;
+    }
+
+    g_stContext.pUserContext = i_pContext;
+
+    return TRUE;
+}//ChSetContext
+
+
+////////////////////////////////////////////////////////////////////////////////
 //ChUnInstall
-static tBOOL ChUnInstall()
+static __attribute__ ((unused)) tBOOL ChUnInstall()
 {
     return TRUE;
 }//ChUnInstall
+
+#endif //PSIGNAL_H

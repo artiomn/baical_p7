@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -25,11 +25,13 @@
     #define _LARGEFILE64_SOURCE
 #endif
 //Headers have to be included in application source files
-//#include <sys/types.h>
-//#include <sys/stat.h>
-//#include <fcntl.h>
-//#include <unistd.h>
-//#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+
+#define GetLastError() errno
 
 //UTF-8 text file header - {0xEF, 0xBB, 0xBF}
 
@@ -54,6 +56,12 @@ public:
     {
         //LOCK_DESTROY(m_hCS);
         Close(FALSE);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    tBOOL IsOpened()
+    {
+        return (PFILE_INVALID_HANDLE != m_iFile);
     }
 
     ////////////////////////////////////////////////////////////////////////////

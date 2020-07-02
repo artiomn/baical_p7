@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -18,6 +18,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#define SHARED_SEM_NULL           NULL
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //CShared
@@ -27,6 +29,7 @@ class CShared
     {
         HANDLE  hMemory;
         HANDLE  hMutex;
+        tXCHAR *pName;
     };
 
     enum eType
@@ -38,6 +41,7 @@ class CShared
 
 public:
     typedef sShared *hShared;
+    typedef HANDLE   hSem;
 
     enum eLock
     {
@@ -84,8 +88,11 @@ public:
 
         l_dwLen = (DWORD)wcslen(i_pName) + 128;
         l_pName = (wchar_t*)malloc(sizeof(wchar_t) * l_dwLen);
+        l_pShared->pName = PStrDub(i_pName);
 
-        if (NULL == l_pName)
+        if (    (NULL == l_pName)
+             || (NULL == l_pShared->pName)
+           )
         {
             l_bReturn = FALSE;
             goto l_lblExit;
@@ -384,12 +391,14 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     //Lock
-    static eLock Lock(const tXCHAR  *i_pName, tUINT32 i_dwTimeout_ms)
+    static eLock Lock(const tXCHAR  *i_pName, CShared::hSem &o_rSem, tUINT32 i_dwTimeout_ms)
     {
         HANDLE   l_hMutex   = NULL;
         eLock    l_eReturn  = CShared::E_OK;
         DWORD    l_dwLen    = 0;
         wchar_t *l_pName    = NULL;
+
+        o_rSem = SHARED_SEM_NULL;
 
         if (NULL == i_pName)
         {
@@ -430,10 +439,17 @@ public:
             l_pName = NULL;
         }
 
-        if (l_hMutex)
+        if (SHARED_SEM_NULL != l_hMutex)
         {
-            CloseHandle(l_hMutex);
-            l_hMutex = NULL;
+            if (CShared::E_OK == l_eReturn)
+            {
+                o_rSem = l_hMutex;
+            }
+            else 
+            {
+                CloseHandle(l_hMutex);
+                l_hMutex = SHARED_SEM_NULL;
+            }
         }
 
         return l_eReturn;
@@ -442,57 +458,41 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     //UnLock
-    static tBOOL UnLock(const tXCHAR  *i_pName)
+    static eLock UnLock(CShared::hSem &io_rSem)
     {
-        HANDLE   l_hMutex   = NULL;
-        tBOOL    l_bReturn  = TRUE;
-        DWORD    l_dwLen    = 0;
-        wchar_t *l_pName    = NULL;
+        HANDLE  l_hMutex  = NULL;
+        eLock   l_eReturn = CShared::E_ERROR;
 
-        if (NULL == i_pName)
+        if (SHARED_SEM_NULL == io_rSem)
         {
-            l_bReturn = FALSE;
+            l_eReturn = CShared::E_NOT_EXISTS;
             goto l_lblExit;
         }
 
-        l_dwLen = (DWORD)wcslen(i_pName) + 128;
-        l_pName = (wchar_t*)malloc(sizeof(wchar_t) * l_dwLen);
-
-        if (NULL == l_pName)
-        {
-            l_bReturn = FALSE;
-            goto l_lblExit;
-        }
-
-        ////////////////////////////////////////////////////////////////////////
-        //open mutex and own it
-        Create_Name(l_pName, l_dwLen, ETYPE_MUTEX, i_pName);
-
-        l_hMutex = OpenMutexW(MUTEX_ALL_ACCESS, FALSE, l_pName);
-        if (NULL == l_hMutex)
-        {
-            l_bReturn = FALSE;
-            goto l_lblExit;
-        }
-
-        ReleaseMutex(l_hMutex);
+        ReleaseMutex(io_rSem);
 
     l_lblExit:
-        if (l_pName)
+        if (io_rSem)
         {
-            free(l_pName);
-            l_pName = NULL;
+            CloseHandle(io_rSem);
+            io_rSem = SHARED_SEM_NULL;
         }
 
-        if (l_hMutex)
-        {
-            CloseHandle(l_hMutex);
-            l_hMutex = NULL;
-        }
-
-        return l_bReturn;
+        return l_eReturn;
     }//UnLock
 
+
+    ////////////////////////////////////////////////////////////////////////////
+    //GetSemName
+    static const tXCHAR* GetName(hShared i_pShared)
+    {
+        if (NULL == i_pShared)
+        {
+            return FALSE;
+        }
+
+        return i_pShared->pName;
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     //Close
@@ -503,10 +503,10 @@ public:
             return FALSE;
         }
 
-        if (i_hShared->hMutex)
-        {
-            WaitForSingleObject(i_hShared->hMutex, 3000);
-        }
+        //if (i_hShared->hMutex)
+        //{
+        //    WaitForSingleObject(i_hShared->hMutex, 3000);
+        //}
 
         if (i_hShared->hMemory)
         {
@@ -520,11 +520,26 @@ public:
             i_hShared->hMutex = NULL;
         }
 
+        if (i_hShared->pName)
+        {
+            PStrFreeDub(i_hShared->pName);
+            i_hShared->pName = NULL;
+        }
+
         delete i_hShared;
-        i_hShared = NULL;
 
         return TRUE;
     }//Shared_Close
+
+    ////////////////////////////////////////////////////////////////////////////
+    //UnLink - linux required it due to fact that life time of shared object is
+    //almost infinit, and cleanup should be done manually
+    static tBOOL UnLink(const tXCHAR  *i_pName)
+    {
+        UNUSED_ARG(i_pName); 
+        return TRUE; 
+    }//UnLink
+
 
 private:
     ////////////////////////////////////////////////////////////////////////////

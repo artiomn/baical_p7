@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -40,6 +40,12 @@ public:
     virtual ~CPFile()
     {
         Close(FALSE);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    tBOOL IsOpened() 
+    {
+        return (NULL != m_hFile);
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -207,19 +213,21 @@ public:
 
         while (l_szReturn < i_szBuffer)
         {
-            if (WriteFile(m_hFile, 
-                          i_pBuffer + l_szReturn, 
-                          (DWORD)(i_szBuffer - l_szReturn), 
-                          &l_dwWritten, 
-                          NULL
-                         )
+            l_dwWritten = 0;
+            if (!WriteFile(m_hFile, 
+                           i_pBuffer + l_szReturn, 
+                           (DWORD)(i_szBuffer - l_szReturn), 
+                           &l_dwWritten, 
+                           NULL
+                          )
                )
             {
                 l_szReturn += (size_t)l_dwWritten;
+                break;
             }
             else
             {
-                break;
+                l_szReturn += (size_t)l_dwWritten;
             }
         }
 
@@ -249,6 +257,7 @@ public:
 
         while (l_szReturn < i_szBuffer)
         {
+            l_dwRead = 0;
             if (ReadFile(m_hFile, 
                          o_pBuffer + l_szReturn, 
                          (DWORD)(i_szBuffer - l_szReturn),
@@ -261,6 +270,7 @@ public:
             }
             else
             {
+                l_szReturn += (size_t)l_dwRead;
                 break;
             }
 

@@ -1,5 +1,6 @@
-# Baical P7 logger
+# [Baical P7 logger](http://baical.net/p7.html)
 
+Version: 
 Build system improvements and CMake build.
 
 

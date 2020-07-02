@@ -1,24 +1,49 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 
-project(P7)
+project(p7)
 
-if (WIN32)
-  set(platform_include_dir ../Shared/Platforms/Windows_x86)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../Headers/)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../Shared/)
+
+if(WIN32)
+    include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../Shared/Platforms/Windows_x86/")
+    set(P7_PLATFORM_LIBS Ws2_32) 
+elseif(UNIX)
+    include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../Shared/Platforms/Linux_x86/")
+    set(P7_PLATFORM_LIBS rt pthread)
 else()
-  set(platform_include_dir ../Shared/Platforms/Linux_x86)
+    message(FATAL_ERROR "${PROJECT_NAME}: Platform not supported")
 endif()
 
-file(GLOB headers ../Headers/*.h ../Shared/*.h ${platform_include_dir}/*.h)
-file(GLOB src *.cpp *.h)
+aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} P7_SOURCES)
 
-include_directories(AFTER SYSTEM include ../Shared ../Headers ${platform_include_dir})
+add_library(${PROJECT_NAME} STATIC ${P7_SOURCES})
+add_library(${PROJECT_NAME}-shared SHARED ${P7_SOURCES})
+target_link_libraries(${PROJECT_NAME} PUBLIC ${P7_PLATFORM_LIBS})
+target_link_libraries(${PROJECT_NAME}-shared ${P7_PLATFORM_LIBS})
 
-set(CMAKE_CXX_FLAGS -fPIC)
+set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET ${PROJECT_NAME}-shared PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-add_library(${PROJECT_NAME} SHARED ${headers} ${src})
-add_library(${PROJECT_NAME}_static STATIC ${headers} ${src})
+target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../Headers/")
+target_include_directories(${PROJECT_NAME}-shared PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../Headers/")
 
+target_include_directories(${PROJECT_NAME} INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/../Headers/")
+target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../Shared/")
 
-target_link_libraries(${PROJECT_NAME} dl rt pthread)
+if(WIN32)
+    target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../Shared/Platforms/Windows_x86/")
+elseif(UNIX)
+    target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../Shared/Platforms/Linux_x86/")
+endif()
 
-# Artiom N.(cl)2017
+install(TARGETS ${PROJECT_NAME}
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin)
+
+install(TARGETS ${PROJECT_NAME}-shared
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin)
+        

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -55,7 +55,7 @@ public:
         , m_pSocket(NULL)
         , m_dwFacility(1)
         , m_pBuffer(0)
-        , m_szBuffer(512)
+        , m_szBuffer(1472)
         , m_dwProcId(0)
     {
         CSys::Get_Host_Name(m_pHostName, LENGTH(m_pHostName));
@@ -123,6 +123,7 @@ public:
 
         if (FALSE == WSA_Init())
         {
+            P7_Set_Last_Error(eP7_Error_Network);
             PRINTF(TM("Windows Socket initialization fails!"));
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
         }
@@ -231,9 +232,14 @@ public:
             m_pBuffer = (tACHAR*)malloc(m_szBuffer);
             if (!m_pBuffer)
             {
+                P7_Set_Last_Error(eP7_Error_MemoryAllocation);        
                 PRINTF(TM("Memory allocation fails!"));
                 l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             }
+        }
+        else
+        {                           
+            P7_Set_Last_Error(eP7_Error_Network);        
         }
 
         return l_eReturn;
@@ -288,6 +294,8 @@ public:
 
         return ECLIENT_STATUS_OK;
     }//Log
+
+    virtual eClient_Status DumpBuffers() { return ECLIENT_STATUS_OK; }
 };
 
 #endif //CLTEXTSYSLOG_H

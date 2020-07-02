@@ -1,16 +1,20 @@
-cmake_minimum_required(VERSION 2.8)
-project(P7_Speed_Cpp)
+cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 
-if (WIN32)
-  set(platform_include_dir ../../Shared/Platforms/Windows_x86)
+project(p7_speed_test)
+
+if(WIN32)
+elseif(UNIX)
 else()
-  set(platform_include_dir ../../Shared/Platforms/Linux_x86)
+    message(FATAL_ERROR "${PROJECT_NAME}: Platform not supported")
 endif()
 
-file(GLOB headers ../../Headers/*.h ../../Shared/*.h ${platform_include_dir}/*.h)
-include_directories(AFTER SYSTEM ../../Shared ../../Headers ${platform_include_dir})
+aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR} PROJ_SOURCES)
+add_executable(${PROJECT_NAME} ${PROJ_SOURCES})
+target_link_libraries (${PROJECT_NAME} p7)    
 
-add_executable (P7_Speed_Test Speed.cpp)
-target_link_libraries (P7_Speed_Test P7 pthread dl rt)
+set_ide_folder(${PROJECT_NAME})
 
-# Artiom N.(cl)2017
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+ 
+
+

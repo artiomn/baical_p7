@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -19,9 +19,18 @@
 #ifndef PSTRING_H
 #define PSTRING_H
 
-#define PRINTF(...)     printf(__VA_ARGS__)
-//wprintf(__VA_ARGS__)
+#if !defined(PRINTF)
+    #if defined(UTF8_ENCODING)
+        #define PRINTF(...) printf(__VA_ARGS__)
+    #else
+        #define PRINTF(...) wprintf(__VA_ARGS__)
+    #endif
+#endif
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
 #include "UTF.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -39,6 +48,41 @@ static __attribute__ ((unused)) tXCHAR* PStrCpy(tXCHAR       *i_pDst,
 {
     UNUSED_ARG(i_szDst);
     return strcpy(i_pDst, i_pSrc);
+}//PStrLen
+
+////////////////////////////////////////////////////////////////////////////////
+//PWStrCpy
+static inline tWCHAR *PWStrCpy(tWCHAR       *i_pDst,
+                               size_t        i_szDst,
+                               const tWCHAR *i_pSrc
+                              )
+{
+    while (    (*i_pSrc)
+            && (1 < i_szDst)
+          )
+    {
+        *i_pDst = *i_pSrc;
+        i_pDst++; i_pSrc++;
+        i_szDst--;
+    }
+
+    *i_pDst = 0;
+
+    return i_pDst;
+}//PStrLen
+
+
+////////////////////////////////////////////////////////////////////////////////
+//PStrCpy
+static __attribute__ ((unused)) tXCHAR* PStrNCpy(tXCHAR       *i_pDst,
+                                                 size_t        i_szDst,
+                                                 const tXCHAR *i_pSrc,
+                                                 size_t        i_pSrcMaxCount
+                                                )
+{
+    UNUSED_ARG(i_szDst);
+    strncpy((char*)i_pDst, (char*)i_pSrc, i_pSrcMaxCount);
+    return i_pDst;
 }//PStrLen
 
 
@@ -158,10 +202,24 @@ static const __attribute__ ((unused)) tXCHAR *PStrChr(const tXCHAR * i_pStr, tXC
     return strchr(i_pStr, i_cCh);
 }//PStrChr
 
+///////////////////////////////////////////////////////////////////////////////
+//PStrChr
+static __attribute__ ((unused)) tXCHAR *PStrChr(tXCHAR * i_pStr, tXCHAR i_cCh)
+{
+    return strchr(i_pStr, i_cCh);
+}//PStrChr
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //PStrrChr
-static const __attribute__ ((unused)) tXCHAR *PStrrChr(const tXCHAR * i_pStr, tXCHAR i_cCh)
+static const __attribute__ ((unused)) tXCHAR *PStrrChr(const tXCHAR * i_pStr, const tXCHAR i_cCh)
+{
+    return strrchr(i_pStr, i_cCh);
+}//PStrrChr
+
+///////////////////////////////////////////////////////////////////////////////
+//PStrrChr
+static __attribute__ ((unused)) tXCHAR *PStrrChr(tXCHAR * i_pStr, tXCHAR i_cCh)
 {
     return strrchr(i_pStr, i_cCh);
 }//PStrrChr

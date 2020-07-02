@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -27,9 +27,11 @@
 
 #define COMMUNICATION_THREAD_IDLE_TIMEOUT                                 (5)
 #define COMMUNICATION_THREAD_EXIT_TIMEOUT                                 (5000)
-#define COMMUNICATION_RESPONSE_TIMEOUT                                    (500)
+#define COMMUNICATION_RESPONSE_TIMEOUT                                    (100)
 #define COMMUNICATION_DATA_SEGMENT_MAX_DURATION                           (750)
 #define COMMUNICATION_IDLE_TIMEOUT                                        (1000)
+#define COMMUNICATION_LOSSES_MAX                                          (60) //percents
+
 #define COMMUNICATION_MAX_DELIVERY_FAILS                                  (10)
 #define SOCKET_RECEIVE_RESPONSE_TIMEOUT                                   (10) 
 
@@ -59,6 +61,7 @@ CClBaical::CClBaical(tXCHAR **i_pArgs, tINT32   i_iCount)
 
     , m_pData_Wnd(NULL)
     , m_pData_Wnd_Cell(NULL)
+    , m_bData_Wnd_Fixed(FALSE)
     , m_dwData_Wnd_Max_Count(0)
     , m_dwData_Wnd_Size(0)
     , m_dwData_Wnd_TimeStamp(0)
@@ -86,6 +89,13 @@ CClBaical::CClBaical(tXCHAR **i_pArgs, tINT32   i_iCount)
     , m_bChnl_Thread(FALSE)
     , m_hChnl_Thread(0) //NULL
 
+    , m_bLocalHost(FALSE)
+    , m_bExtension(FALSE)
+
+    , m_pHdrUsrData(NULL)
+    , m_pHdrUsrPacket(NULL)
+    , m_uHdrUsrSize(0)
+    , m_uHdrUsrChannel(USER_PACKET_CHANNEL_ID_MAX_SIZE)
 {
     memset(&m_hCS_Data_Out, 0, sizeof(m_hCS_Data_Out));
     memset(&m_hCS_Data_In,  0, sizeof(m_hCS_Data_In));
@@ -129,7 +139,7 @@ CClBaical::~CClBaical()
 {
     Uninit_Crash_Handler();
 
-    Flush();
+    Close();
 
     CClient::Unshare();
 
@@ -230,8 +240,10 @@ eClient_Status CClBaical::Init_Sockets(tXCHAR **i_pArgs,
 
     if (FALSE == WSA_Init())
     {
+        P7_Set_Last_Error(eP7_Error_Network);
+
         JOURNAL_CRITICAL(m_pLog, 
-                         TM("Windows Socket initialization fail !"));
+                         TM("Socket initialization fail !"));
 
         l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
     }
@@ -264,6 +276,14 @@ eClient_Status CClBaical::Init_Sockets(tXCHAR **i_pArgs,
         if (NULL == l_pPort)
         {
             l_pPort = (tXCHAR*)TM("9009");
+        }
+
+
+        if (    (0 == PStrICmp(l_pAddr, TM("127.0.0.1")))
+             || (0 == PStrICmp(l_pAddr, TM("::1")))
+           )
+        {
+            m_bLocalHost = TRUE;
         }
 
         l_tHint.ai_family   = AF_UNSPEC; //AF_INET;
@@ -310,6 +330,11 @@ eClient_Status CClBaical::Init_Sockets(tXCHAR **i_pArgs,
             FREE_ADDR_INFO(l_pInfo);
             l_pInfo = NULL;
         }
+
+        if (ECLIENT_STATUS_OK != l_eReturn)
+        {
+            P7_Set_Last_Error(eP7_Error_Network);
+        }
     }//if (ECLIENT_STATUS_OK == l_eReturn)
 
     return l_eReturn;
@@ -322,10 +347,9 @@ eClient_Status CClBaical::Init_Pool(tXCHAR **i_pArgs,
                                     tINT32   i_iCount
                                    )
 {
-    //eClient_Status l_eReturn       = ECLIENT_STATUS_OK;
-    tXCHAR        *l_pArg_Value    = NULL;
-    tUINT32        l_dwMax_Memory  = 0x100000; //1mb by default
-    tUINT32        l_dwPacket_Size = TPACKET_MIN_SIZE;
+    tXCHAR  *l_pArg_Value    = NULL;
+    tUINT32  l_dwMax_Memory  = 0x100000; //1mb by default
+    tUINT32  l_dwPacket_Size = TPACKET_DEF_SIZE;
 
     ////////////////////////////////////////////////////////////////////////////
     //packet size
@@ -343,6 +367,11 @@ eClient_Status CClBaical::Init_Pool(tXCHAR **i_pArgs,
         {
             l_dwPacket_Size = TPACKET_MAX_SIZE;
         }
+    }
+
+    if (m_bLocalHost)
+    {
+        l_dwPacket_Size = TPACKET_MAX_SIZE;
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -374,40 +403,41 @@ eClient_Status CClBaical::Init_Pool(tXCHAR **i_pArgs,
     ////////////////////////////////////////////////////////////////////////////
     //window size
 
+    //size of the transmission window in packets. Sometimes is useful to manage it
+    //if server aggressively loose incoming packets
+    //Min = 1
+    //max = ((pool size / packet size) / 2)
+
     //here is possible maximal window length
-    m_dwData_Wnd_Max_Count = (SERVER_REPORT_SIZE - SERVER_REPORT_HEADER_SIZE) * 8;
-
+    tUINT32 l_uWnd_Max_Total = (SERVER_REPORT_SIZE - SERVER_REPORT_HEADER_SIZE) * 8;
     //if window size is more than half of all memory we resize the window length
-    if ( ((tUINT64)m_dwData_Wnd_Max_Count * (tUINT64)l_dwPacket_Size) > (l_dwMax_Memory / 2) )
-    {
-        m_dwData_Wnd_Max_Count = (l_dwMax_Memory / l_dwPacket_Size) / 2;
-    }
-    
-    //if window size is more than 2Mb, truncate to 2Mb
-    if (((tUINT64)m_dwData_Wnd_Max_Count * (tUINT64)l_dwPacket_Size) > 0x200000)
-    {
-        m_dwData_Wnd_Max_Count = 0x200000 / l_dwPacket_Size;
-    }
+    tUINT32 l_uWnd_Max_Mem   = (l_dwMax_Memory / l_dwPacket_Size) / 2;
+    //if window size is more than socket buffer size, truncate to it
+    tUINT32 l_uWnd_Max_Net   = (m_pSocket->GetSendBufferSize() / l_dwPacket_Size) - 1;
+    tUINT32 l_uWnd_Max_Usr   = l_uWnd_Max_Total;
 
-    
+   
     l_pArg_Value = Get_Argument_Text_Value(i_pArgs, i_iCount,
                                            (tXCHAR*)CLIENT_COMMAND_WINDOW_BAICAL_SIZE);
     if (l_pArg_Value)
     {
-        tUINT32 l_dwCount = (tUINT32)PStrToInt(l_pArg_Value);
+        l_uWnd_Max_Usr = (tUINT32)PStrToInt(l_pArg_Value);
 
-        if (1 > l_dwCount)
+        if (1 > l_uWnd_Max_Usr)
         {
-            l_dwCount = 1;
+            l_uWnd_Max_Usr = 1;
         }
         
-        if (l_dwCount > m_dwData_Wnd_Max_Count)
-        {
-            l_dwCount = m_dwData_Wnd_Max_Count;
-        }
-        
-        m_dwData_Wnd_Max_Count = l_dwCount;
+        m_bData_Wnd_Fixed = TRUE;
     }
+
+    //select minimum window size
+    m_dwData_Wnd_Max_Count = l_uWnd_Max_Total;
+    if (l_uWnd_Max_Mem < m_dwData_Wnd_Max_Count) m_dwData_Wnd_Max_Count = l_uWnd_Max_Mem;
+    if (l_uWnd_Max_Net < m_dwData_Wnd_Max_Count) m_dwData_Wnd_Max_Count = l_uWnd_Max_Net;
+    if (l_uWnd_Max_Usr < m_dwData_Wnd_Max_Count) m_dwData_Wnd_Max_Count = l_uWnd_Max_Usr;
+
+
     
     ////////////////////////////////////////////////////////////////////////////
     //initialize pool
@@ -435,6 +465,11 @@ eClient_Status CClBaical::Init_Pool(tXCHAR **i_pArgs,
                  m_dwData_Wnd_Max_Count
                 );
 
+    if (NULL == m_pBPool)
+    {
+       P7_Set_Last_Error(eP7_Error_MemoryAllocation);
+    }
+
     return (NULL != m_pBPool) ? ECLIENT_STATUS_OK : ECLIENT_STATUS_INTERNAL_ERROR;
 }//Init_Pool
 
@@ -459,6 +494,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
         m_pData_Queue_Out = new CBList<CTPacket*>();
         if (NULL == m_pData_Queue_Out)
         {
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_CRITICAL(m_pLog, TM("Data queue [out] initialization failed"));
         }
@@ -470,6 +506,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
         m_pData_Queue_In = new CBList<CTPacket*>();
         if (NULL == m_pData_Queue_In)
         {
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_CRITICAL(m_pLog, TM("Data queue [in] initialization failed"));
         }
@@ -480,6 +517,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
         m_pData_Wnd = new CBList<CTPacket*>();
         if (NULL == m_pData_Wnd)
         {
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_CRITICAL(m_pLog, TM("Data lagoon initialization failed"));
         }
@@ -534,6 +572,8 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
             m_cPacket_Bye.Set_Flag(TPACKET_FLAG_BIG_ENDIAN_CLN);
         }
 
+        m_cPacket_Hello.Set_Flag(TPACKET_FLAG_EXTENSION);
+
     #if defined(GTX64)
         m_cPacket_Hello.Set_Flag(TPACKET_FLAG_ARCH_64);
     #endif
@@ -566,6 +606,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
     {
         if (FALSE == m_cConn_Event.Init(1, EMEVENT_SINGLE_MANUAL))
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Connection event wasn't created !"));
         }
@@ -575,6 +616,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
     {
         if (FALSE == m_cComm_Event.Init(1, EMEVENT_SINGLE_AUTO))
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Exit event wasn't created !"));
         }
@@ -589,6 +631,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
                                      )
            )
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn      = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Communication thread wasn't created !"));
         }
@@ -602,6 +645,7 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
     {
         if (FALSE == m_cChnl_Event.Init(2, EMEVENT_SINGLE_AUTO, EMEVENT_MULTI))
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Exit event wasn't created !"));
         }
@@ -616,7 +660,8 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
                                      )
            )
         {
-            l_eReturn      = ECLIENT_STATUS_INTERNAL_ERROR;
+            P7_Set_Last_Error(eP7_Error_OS);
+            l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Channel thread wasn't created !"));
         }
         else
@@ -624,7 +669,6 @@ eClient_Status CClBaical::Init_Members(tXCHAR **i_pArgs,
             m_bChnl_Thread = TRUE;
         }
     }
-
 
     return l_eReturn;
 }//Init_Members
@@ -703,6 +747,20 @@ tBOOL CClBaical::Process_Incoming_Packet(CTPacket *i_pPacket)
 
                 if (l_cServerResponse.Get_Result())
                 {
+                    if (ETPT_CLIENT_HELLO == m_pPacket_Control->Get_Type())
+                    {
+                        LOCK_ENTER(m_hCS_Data_In);
+                        if (TPACKET_FLAG_EXTENSION & i_pPacket->Get_Flags())
+                        {
+                            m_bExtension = TRUE;
+                        }
+                        else
+                        {
+                            m_bExtension = FALSE;
+                        }
+                        LOCK_EXIT(m_hCS_Data_In);
+                    }
+
                     //if this is response to data report packet ... 
                     if (ETPT_CLIENT_DATA_REPORT == m_pPacket_Control->Get_Type())
                     {
@@ -732,6 +790,13 @@ tBOOL CClBaical::Process_Incoming_Packet(CTPacket *i_pPacket)
                 else //server set this flag to 0 when it not recognize this client
                 {
                     Reset_Connetion();
+                }
+
+                if (TPACKET_FLAG_EXTENSION & i_pPacket->Get_Flags())
+                {
+                    Parse_Extensions(l_cServerResponse.Get_Buffer() + ACKNOWLEDGMENT_SIZE, 
+                                     (size_t)l_cServerResponse.Get_Size() - ACKNOWLEDGMENT_SIZE
+                                    );
                 }
 
                 if (TPACKET_FLAG_EXTRA_DATA & i_pPacket->Get_Flags())
@@ -784,6 +849,18 @@ tBOOL CClBaical::Process_Incoming_Packet(CTPacket *i_pPacket)
                                   m_pData_Wnd->Count(),
                                   l_dwTotal
                                  );
+
+                    if (    (!m_bData_Wnd_Fixed)
+                         && ((m_pData_Wnd->Count() * 100 / l_dwTotal) >= COMMUNICATION_LOSSES_MAX)
+                       )
+                    {
+                        JOURNAL_ERROR(m_pLog,
+                                      TM("Recalculate transmission window due to network losses, new length: %d"), 
+                                      m_dwData_Wnd_Max_Count
+                                     );
+                        m_dwData_Wnd_Max_Count = (l_dwTotal - m_pData_Wnd->Count());
+                    }
+
                 }
                 else
                 {
@@ -1125,6 +1202,14 @@ CTPacket *CClBaical::Pull_Firt_Data_Packet()
         m_pData_Queue_Out->Del(l_pElement, FALSE);
     }
 
+    if (m_pHdrUsrPacket == l_pResult)
+    {
+        m_pHdrUsrPacket  = 0;
+        m_pHdrUsrData    = 0;
+        m_uHdrUsrSize    = 0;
+        m_uHdrUsrChannel = USER_PACKET_CHANNEL_ID_MAX_SIZE;
+    }
+
     LOCK_EXIT(m_hCS_Data_Out); 
 
     return l_pResult;
@@ -1133,9 +1218,9 @@ CTPacket *CClBaical::Pull_Firt_Data_Packet()
 
 ////////////////////////////////////////////////////////////////////////////////
 //Pull_Last_Data_Packet
-CTPacket *CClBaical::Pull_Last_Data_Packet()
+CTPacket *CClBaical::Reuse_Data_Packet(CTPData &i_rData, tUINT32 i_uChannel_ID, tUINT32 i_uSize)
 {
-    CTPacket * l_pResult = NULL;
+    CTPacket *l_pResult = NULL;
     
     LOCK_ENTER(m_hCS_Data_Out); 
 
@@ -1144,6 +1229,67 @@ CTPacket *CClBaical::Pull_Last_Data_Packet()
     {
         l_pResult = m_pData_Queue_Out->Get_Data(l_pElement);
         m_pData_Queue_Out->Del(l_pElement, FALSE);
+    }
+
+    if (    (m_pHdrUsrPacket)
+         && (m_uHdrUsrChannel == i_uChannel_ID)
+         && ((i_uSize + m_uHdrUsrSize) <= CHANNEL_PACKETS_UNION_MAX_SIZE)
+       )
+    {
+        m_uHdrUsrSize += i_uSize;
+        sH_User_Raw l_sHeader = { INIT_USER_HEADER(m_uHdrUsrSize, m_uHdrUsrChannel) };
+        memcpy(m_pHdrUsrData, &l_sHeader, sizeof(l_sHeader));
+
+        if (l_pResult)
+        {
+            i_rData.Attach(l_pResult);
+            if (0 >= i_rData.Get_Tail_Size())
+            {
+                i_rData.Detach();
+                m_pData_Queue_Out->Add_After(m_pData_Queue_Out->Get_Last(), l_pResult);
+                l_pResult = m_pBPool->Pull_Buffer();
+                i_rData.Attach(l_pResult);
+                i_rData.Initialize();
+            }
+        }
+        else
+        {
+            l_pResult = m_pBPool->Pull_Buffer();
+            i_rData.Attach(l_pResult);
+            i_rData.Initialize();
+        }
+    }
+    else
+    {
+        m_uHdrUsrSize    = i_uSize + (tUINT32)sizeof(sH_User_Raw);
+        m_uHdrUsrChannel = i_uChannel_ID;
+
+        sH_User_Raw l_sHeader = { INIT_USER_HEADER(m_uHdrUsrSize, m_uHdrUsrChannel) };
+
+        if (l_pResult)
+        {
+            i_rData.Attach(l_pResult);
+            if (sizeof(l_sHeader) >= i_rData.Get_Tail_Size())
+            {
+                i_rData.Detach();
+                m_pData_Queue_Out->Add_After(m_pData_Queue_Out->Get_Last(), l_pResult);
+                l_pResult = m_pBPool->Pull_Buffer();
+                i_rData.Attach(l_pResult);
+                i_rData.Initialize();
+            }
+        }
+        else
+        {
+            l_pResult = m_pBPool->Pull_Buffer();
+            i_rData.Attach(l_pResult);
+            i_rData.Initialize();
+        }
+
+        m_pHdrUsrPacket = l_pResult;
+        m_pHdrUsrData   = i_rData.Get_Tail();
+
+        memcpy(m_pHdrUsrData, &l_sHeader, sizeof(l_sHeader));
+        i_rData.Append_Size((tUINT16)sizeof(l_sHeader));
     }
 
     LOCK_EXIT(m_hCS_Data_Out); 
@@ -1169,6 +1315,88 @@ tBOOL CClBaical::Push_Last_Data_Packet(CTPacket *i_pPacket)
 
     return TRUE;
 }//Push_Last_Data_Packet
+
+////////////////////////////////////////////////////////////////////////////////
+//Parse_Extensions
+void CClBaical::Parse_Extensions(tUINT8 *i_pBuffer, size_t i_szBuffer)
+{
+    while (i_szBuffer > sizeof(sH_Ext))
+    {
+        sH_Ext *l_pExt = (sH_Ext*)i_pBuffer;
+
+        if (ETPE_SERVER_NETWORK_INFO == l_pExt->wType)
+        {
+            sH_Ext_Srv_Info *l_pInfo = (sH_Ext_Srv_Info*)(i_pBuffer + sizeof(sH_Ext));
+            //for the time being ignore almost all fields, except buffer size on server side:
+            if (FALSE == m_bData_Wnd_Fixed)
+            {
+                //even if it will overflow we will check it in next IF
+                tUINT32 l_uiNewWndSize = (l_pInfo->dwSocket_Buffer / m_pBPool->Get_Buffer_Size()) - 1; 
+
+                //we will apply only server wnd value if it is less then local to fit in all limitations for both sides
+                if (l_uiNewWndSize < m_dwData_Wnd_Max_Count)
+                {
+                    m_dwData_Wnd_Max_Count = l_uiNewWndSize;
+                }
+            }
+        }
+        else if (ETPE_USER_DATA == l_pExt->wType)
+        {
+            //skip here
+        }
+        else
+        {
+            JOURNAL_ERROR(m_pLog, TM("Unknown extension packet [%d:%d]"), (tUINT32)l_pExt->wType, (tUINT32)l_pExt->wSize);
+        }
+
+        i_pBuffer  += l_pExt->wSize;
+        i_szBuffer -= l_pExt->wSize;
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//Parse_User_Data
+void CClBaical::Parse_User_Data(tUINT8 *i_pBuffer, size_t i_szBuffer)
+{
+    tUINT32       l_dwChannelId   = 0;
+    tUINT32       l_dwPacketSize  = 0;
+    IP7C_Channel *l_pChannel      = NULL;
+    tUINT8       *l_pStop         = i_pBuffer + i_szBuffer;
+
+    LOCK_ENTER(m_hCS_Reg);
+
+    while (i_pBuffer < l_pStop)
+    {
+        l_dwChannelId  = GET_USER_HEADER_CHANNEL_ID(((sH_User_Raw*)i_pBuffer)->dwBits);
+        l_dwPacketSize = GET_USER_HEADER_SIZE(((sH_User_Raw*)i_pBuffer)->dwBits);
+
+        if (USER_PACKET_CHANNEL_ID_MAX_SIZE > l_dwChannelId)
+        {
+            l_pChannel = m_pChannels[l_dwChannelId];
+        }
+
+        if (l_pChannel)
+        {
+            l_pChannel->On_Receive(l_dwChannelId,
+                                    i_pBuffer + sizeof(sH_User_Data), 
+                                    l_dwPacketSize - sizeof(sH_User_Data),
+                                    m_bBig_Endian
+                                    );
+        }
+        else
+        {
+            JOURNAL_ERROR(m_pLog, 
+                            TM("Channel %d is not registered!"), 
+                            l_dwChannelId
+                            );
+        }
+
+        i_pBuffer += l_dwPacketSize;
+    }
+
+    LOCK_EXIT(m_hCS_Reg);
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1261,9 +1489,9 @@ void CClBaical::Comm_Routine()
                 if (UDP_SOCKET_OK == m_pSocket->Recv(&l_tAddress, 
                                                       (char*)l_pReceived_Packet->Get_Buffer(), 
                                                       l_pReceived_Packet->Get_Buffer_Size(), 
-                                                      &l_dwReceived,
+                                                     &l_dwReceived,
                                                       m_bIs_Response_Waiting ? SOCKET_RECEIVE_RESPONSE_TIMEOUT : 0
-                                                     )
+                                                    )
                    )
                 {
                     if (    (l_dwReceived) 
@@ -1358,11 +1586,6 @@ void CClBaical::Chnl_Routine()
     tUINT32            l_dwSignal      = 0;
     pAList_Cell        l_pElement      = NULL;
     CTPacket          *l_pPacket       = NULL;
-    tUINT8            *l_pBuffer       = NULL;
-    tUINT8            *l_pStop         = NULL;
-    tUINT32            l_dwChannelId   = 0;
-    tUINT32            l_dwPacketSize  = 0;
-    IP7C_Channel      *l_pChannel      = NULL;
 
     while (FALSE == l_bExit)
     {
@@ -1387,40 +1610,38 @@ void CClBaical::Chnl_Routine()
 
             if (l_pPacket)
             {
-                l_pBuffer = l_pPacket->Get_Buffer() + ACKNOWLEDGMENT_SIZE;
-                l_pStop   = l_pPacket->Get_Buffer() + l_pPacket->Get_Size();
-
-                LOCK_ENTER(m_hCS_Reg);
-
-                while (l_pBuffer < l_pStop)
+                if (TPACKET_FLAG_EXTENSION & l_pPacket->Get_Flags()) //new server case v>4.3
                 {
-                    l_dwChannelId  = GET_USER_HEADER_CHANNEL_ID(((sH_User_Raw*)l_pBuffer)->dwBits);
-                    l_dwPacketSize = GET_USER_HEADER_SIZE(((sH_User_Raw*)l_pBuffer)->dwBits);
+                    tUINT8 *l_pBuffer  = l_pPacket->Get_Buffer() + ACKNOWLEDGMENT_SIZE;
+                    size_t  l_szBuffer = (size_t)l_pPacket->Get_Size() - ACKNOWLEDGMENT_SIZE;
 
-                    if (USER_PACKET_CHANNEL_ID_MAX_SIZE > l_dwChannelId)
+                    while (l_szBuffer > sizeof(sH_Ext))
                     {
-                        l_pChannel = m_pChannels[l_dwChannelId];
+                        sH_Ext *l_pExt = (sH_Ext*)l_pBuffer;
+
+                        if (ETPE_SERVER_NETWORK_INFO == l_pExt->wType)
+                        {
+                            //skip, was processed by communication thread
+                        }
+                        else if (ETPE_USER_DATA == l_pExt->wType)
+                        {
+                            Parse_User_Data(l_pBuffer + sizeof(sH_Ext), l_pExt->wSize - sizeof(sH_Ext));
+                        }
+                        else
+                        {
+                            JOURNAL_ERROR(m_pLog, TM("Unknown extension packet [%d:%d]"), (tUINT32)l_pExt->wType, (tUINT32)l_pExt->wSize);
+                        }
+
+                        l_pBuffer  += l_pExt->wSize;
+                        l_szBuffer -= l_pExt->wSize;
                     }
 
-                    if (l_pChannel)
-                    {
-                        l_pChannel->On_Receive(l_dwChannelId,
-                                               l_pBuffer + sizeof(sH_User_Data), 
-                                               l_dwPacketSize - sizeof(sH_User_Data)
-                                              );
-                    }
-                    else
-                    {
-                        JOURNAL_ERROR(m_pLog, 
-                                      TM("Channel %d is not registered!"), 
-                                      l_dwChannelId
-                                     );
-                    }
-
-                    l_pBuffer += l_dwPacketSize;
                 }
-
-                LOCK_EXIT(m_hCS_Reg);
+                else //old server case v<=4.3
+                {
+                    Parse_User_Data(l_pPacket->Get_Buffer() + ACKNOWLEDGMENT_SIZE,
+                                    (size_t)l_pPacket->Get_Size() - ACKNOWLEDGMENT_SIZE);
+                }
 
                 m_pBPool->Push_Buffer(l_pPacket);
                 l_pPacket = NULL;
@@ -1466,7 +1687,7 @@ tBOOL CClBaical::Get_Info(sP7C_Info *o_pInfo)
 
 ////////////////////////////////////////////////////////////////////////////////
 //Flush
-tBOOL CClBaical::Flush()
+tBOOL CClBaical::Close()
 {
     tBOOL l_bStack_Trace = TRUE;
 
@@ -1476,16 +1697,19 @@ tBOOL CClBaical::Flush()
     l_sStatus.bConnected = FALSE;
     l_sStatus.dwResets   = 0;
 
-    LOCK_ENTER(m_hCS_Reg);
-    for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
+    if (m_bFlushChannels)
     {
-        if (m_pChannels[l_dwI])
+        LOCK_ENTER(m_hCS_Reg);
+        for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
         {
-            m_pChannels[l_dwI]->On_Flush(l_dwI, &l_bStack_Trace);
-            m_pChannels[l_dwI]->On_Status(l_dwI, &l_sStatus);
+            if (m_pChannels[l_dwI])
+            {
+                m_pChannels[l_dwI]->On_Flush(l_dwI, &l_bStack_Trace);
+                m_pChannels[l_dwI]->On_Status(l_dwI, &l_sStatus);
+            }
         }
+        LOCK_EXIT(m_hCS_Reg);
     }
-    LOCK_EXIT(m_hCS_Reg);
 
 
     m_cComm_Event.Set(THREAD_EXIT_SIGNAL);
@@ -1527,6 +1751,15 @@ tBOOL CClBaical::Flush()
 
 
 ////////////////////////////////////////////////////////////////////////////////
+//Flush
+void CClBaical::Flush()
+{
+    //nothing to do, component is designed in such a way to deliver new data as 
+    //fast as possible, nothing to flush
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 //Connection_Wait
 tBOOL CClBaical::Connection_Wait(tUINT32 i_dwMilliseconds)
 {
@@ -1550,12 +1783,9 @@ eClient_Status CClBaical::Sent(tUINT32          i_dwChannel_ID,
     eClient_Status   l_eReturn       = ECLIENT_STATUS_OK;
     CTPacket        *l_pPacket       = NULL;
     tUINT32          l_dwTotal_Size  = i_dwSize + (tUINT32)sizeof(sH_User_Raw);
-    sH_User_Raw      l_sHeader       = {INIT_USER_HEADER(l_dwTotal_Size, i_dwChannel_ID)};
-    sP7C_Data_Chunk  l_sHeader_Chunk = {&l_sHeader, sizeof(l_sHeader)};
     tUINT32          l_dwPacket_Size = 0;
     //Wanr: variables without default value!
     tBOOL            l_bExit;
-    sP7C_Data_Chunk *l_pChunk;
     tUINT32          l_dwChunk_Offs;
     CTPData          l_cData;
 
@@ -1577,26 +1807,25 @@ eClient_Status CClBaical::Sent(tUINT32          i_dwChannel_ID,
 
     //N.B. We do not check i_dwSize and real size of all chunks in release mode!!!
 #ifdef _DEBUG
-    tUINT32 l_dwReal_Size = 0;
-    for (tUINT32 l_dwI = 0; l_dwI < i_dwCount; l_dwI ++)
-    {
-        if (i_pChunks[l_dwI].pData)
-        {
-            l_dwReal_Size += i_pChunks[l_dwI].dwSize;
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    if (l_dwReal_Size != i_dwSize)
-    {
-        ATOMIC_INC(&m_lReject_Int);
-        return ECLIENT_STATUS_WRONG_PARAMETERS;
-    }
+    //tUINT32 l_dwReal_Size = 0;
+    //for (tUINT32 l_dwI = 0; l_dwI < i_dwCount; l_dwI ++)
+    //{
+    //    if (i_pChunks[l_dwI].pData)
+    //    {
+    //        l_dwReal_Size += i_pChunks[l_dwI].dwSize;
+    //    }
+    //    else
+    //    {
+    //        break;
+    //    }
+    //}
+    //
+    //if (l_dwReal_Size != i_dwSize)
+    //{
+    //    ATOMIC_INC(&m_lReject_Int);
+    //    return ECLIENT_STATUS_WRONG_PARAMETERS;
+    //}
 #endif
-
 
     LOCK_ENTER(m_hCS);
 
@@ -1621,32 +1850,81 @@ eClient_Status CClBaical::Sent(tUINT32          i_dwChannel_ID,
         goto l_lExit;
     }
 
-    //because we add header as chunk
-    i_dwCount ++;
-
-    //extract last packet form data queue, maybe it contain free space ?! :-)
-    l_pPacket = Pull_Last_Data_Packet();
-
-    if (l_pPacket)
-    {
-        l_cData.Attach(l_pPacket);
-        if (0 >= l_cData.Get_Tail_Size())
-        {
-            l_cData.Detach();
-            Push_Last_Data_Packet(l_pPacket);
-            l_pPacket = NULL;
-        }
-    }
-
     l_bExit        = FALSE;
-    l_pChunk       = &l_sHeader_Chunk; //&i_pChunks[0];
     l_dwChunk_Offs = 0;
-    
-    while (FALSE == l_bExit)
+
+    //extract last packet form data queue, and update header if new packet belongs to the same channel!
+    l_pPacket = Reuse_Data_Packet(l_cData, i_dwChannel_ID, i_dwSize);
+
+    while (    (FALSE == l_bExit)
+            && (l_pPacket)
+          )
     {
-        //if packet is null we need to extract another one 
-        if (NULL == l_pPacket)
+        //if packet free size is larger or equal to chunk size
+        if ( l_cData.Get_Tail_Size() >= i_pChunks->dwSize )
         {
+            memcpy(l_cData.Get_Tail(), 
+                   ((tUINT8*)i_pChunks->pData) + l_dwChunk_Offs,
+                   i_pChunks->dwSize
+                   );
+
+            l_cData.Append_Size((tUINT16)i_pChunks->dwSize);
+
+            //current chunk was moved, we reduce chunks amount 
+            --i_dwCount;
+
+            //if there is no more chunks - move packet to queue
+            if (0 >= i_dwCount)
+            {
+                Push_Last_Data_Packet(l_pPacket);
+                l_cData.Detach();
+                l_pPacket = NULL;
+                l_bExit   = TRUE;
+            }
+            else
+            {
+                //we are finish with that chunk
+                //i_pChunks->dwSize = 0; 
+                l_dwChunk_Offs = 0;
+
+                //go to next chunk
+                i_pChunks ++;
+
+                //if packet is filled - put it to data queue
+                if (0 >= l_cData.Get_Tail_Size())
+                {
+                    Push_Last_Data_Packet(l_pPacket);
+                    l_cData.Detach();
+
+                    l_pPacket = m_pBPool->Pull_Buffer();
+                    if (l_pPacket)
+                    {
+                        l_cData.Attach(l_pPacket);
+                        l_cData.Initialize();
+                    }
+                    else
+                    {
+                        l_eReturn = ECLIENT_STATUS_NO_FREE_BUFFERS;
+                        l_bExit   = TRUE;
+                        ATOMIC_INC(&m_lReject_Mem);
+                    }
+                }
+            }
+        }
+        else //if chunk data is greater than packet free space
+        {
+            memcpy(l_cData.Get_Tail(), 
+                   ((tUINT8*)i_pChunks->pData) + l_dwChunk_Offs,
+                   l_cData.Get_Tail_Size()
+                   );
+            l_dwChunk_Offs   += l_cData.Get_Tail_Size();
+            i_pChunks->dwSize -= l_cData.Get_Tail_Size();
+
+            l_cData.Append_Size(l_cData.Get_Tail_Size());
+
+            Push_Last_Data_Packet(l_pPacket);
+            l_cData.Detach();
+
             l_pPacket = m_pBPool->Pull_Buffer();
             if (l_pPacket)
             {
@@ -1655,78 +1933,11 @@ eClient_Status CClBaical::Sent(tUINT32          i_dwChannel_ID,
             }
             else
             {
+                l_eReturn = ECLIENT_STATUS_NO_FREE_BUFFERS;
                 l_bExit   = TRUE;
                 ATOMIC_INC(&m_lReject_Mem);
-                l_eReturn = ECLIENT_STATUS_NO_FREE_BUFFERS;
             }
         }
-
-        while (    (l_pPacket)
-                && (i_dwCount)
-              )
-        {
-            //if packet free size is larger or equal to chunk size
-            if ( l_cData.Get_Tail_Size() >= l_pChunk->dwSize )
-            {
-                memcpy(l_cData.Get_Tail(), 
-                       ((tUINT8*)l_pChunk->pData) + l_dwChunk_Offs,
-                       l_pChunk->dwSize
-                      );
-
-                l_cData.Append_Size((tUINT16)l_pChunk->dwSize );
-
-                //current chunk was moved, we reduce chunks amount 
-                --i_dwCount;
-
-                //if there is no more chunks - move packet to queue
-                if (0 >= i_dwCount)
-                {
-                    Push_Last_Data_Packet(l_pPacket);
-                    l_cData.Detach();
-                    l_pPacket = NULL;
-                    l_bExit   = TRUE;
-                }
-                else
-                {
-                    //we are finish with that chunk
-                    //l_pChunk->dwSize = 0; 
-                    l_dwChunk_Offs = 0;
-
-                    if (l_pChunk == &l_sHeader_Chunk)
-                    {
-                        l_pChunk = &i_pChunks[0];
-                    }
-                    else
-                    {
-                        //go to next chunk
-                        l_pChunk ++;
-                    }
-
-                    //if packet is filled - put it to data queue
-                    if (0 >= l_cData.Get_Tail_Size())
-                    {
-                        Push_Last_Data_Packet(l_pPacket);
-                        l_cData.Detach();
-                        l_pPacket = NULL;
-                    }
-                }
-            }
-            else //if chunk data is greater than packet free space
-            {
-                memcpy(l_cData.Get_Tail(), 
-                       ((tUINT8*)l_pChunk->pData) + l_dwChunk_Offs,
-                       l_cData.Get_Tail_Size()
-                      );
-                l_dwChunk_Offs   += l_cData.Get_Tail_Size();
-                l_pChunk->dwSize -= l_cData.Get_Tail_Size();
-
-                l_cData.Append_Size(l_cData.Get_Tail_Size());
-
-                Push_Last_Data_Packet(l_pPacket);
-                l_cData.Detach();
-                l_pPacket = NULL;
-            }
-        } //while ( (l_pPacket) && (i_dwCount) )
     } //while (FALSE == l_bExit)
 
 

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -43,6 +43,7 @@ struct sCrash
 {
     tINT32 volatile  lReference;
     CShared::hShared hShared;
+    tUINT64          qwTimeStamp;
     CClient         *pClients[CRASH_CLIENTS_COUNT];
 };
 
@@ -81,6 +82,10 @@ P7_EXPORT IP7_Client * __cdecl P7_Create_Client(const tXCHAR *i_pArgs)
             {
                 l_pArgs[l_iI] = l_pHC_Args[l_iI - l_iCn_ArgsC];
             }
+        }
+        else
+        {
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
         }
     }
 
@@ -154,7 +159,7 @@ P7_EXPORT IP7_Client * __cdecl P7_Create_Client(const tXCHAR *i_pArgs)
     ////////////////////////////////////////////////////////////////////////////
     //do we need to print help
     if ( Get_Argument_Text_Value(l_pArgs, l_iCount,
-                                 (tXCHAR*)CLIENT_COMMAND_LOG_HELP
+                                 (const tXCHAR*)CLIENT_COMMAND_LOG_HELP
                                 ) 
        )
     {
@@ -190,35 +195,52 @@ P7_EXPORT IP7_Client * __cdecl P7_Create_Client(const tXCHAR *i_pArgs)
 //P7_Get_Shared
 P7_EXPORT IP7_Client * __cdecl P7_Get_Shared(const tXCHAR *i_pName)
 {
-    IP7_Client *l_pReturn = NULL;
-    tUINT32     l_dwLen1  = PStrLen(CLIENT_SHARED_PREFIX);
-    tUINT32     l_dwLen2  = PStrLen(i_pName);
-    tXCHAR     *l_pName   = (tXCHAR *)malloc(sizeof(tXCHAR) * (l_dwLen1 + l_dwLen2 + 16));
+    IP7_Client   *l_pReturn  = NULL;
+    tUINT32       l_dwLen1   = PStrLen(CLIENT_SHARED_PREFIX);
+    tUINT32       l_dwLen2   = PStrLen(i_pName);
+    tXCHAR       *l_pName    = (tXCHAR *)malloc(sizeof(tXCHAR) * (l_dwLen1 + l_dwLen2 + 16));
+    tUINT32       l_uTimeHi  = 0;
+    tUINT32       l_uTimeLo  = 0;
+    sObjShared    l_stShared = {};
+    CShared::hSem l_hSem     = SHARED_SEM_NULL;
+
+    CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo);
 
     if (l_pName)
     {
         PStrCpy(l_pName, l_dwLen1 + l_dwLen2 + 16, CLIENT_SHARED_PREFIX);
         PStrCpy(l_pName + l_dwLen1, l_dwLen2 + 16, i_pName);
 
-        if (CShared::E_OK == CShared::Lock(l_pName, 250))
+        if (CShared::E_OK == CShared::Lock(l_pName, l_hSem, 250))
         {
-            if (CShared::Read(l_pName, (tUINT8*)&l_pReturn, sizeof(IP7_Client*)))
+            if (CShared::Read(l_pName, (tUINT8*)&l_stShared, sizeof(l_stShared)))
             {
-                if (l_pReturn)
+                if (    (l_stShared.uProcTimeHi == l_uTimeHi)
+                     && (l_stShared.uProcTimeLo == l_uTimeLo)
+                   )
                 {
-                    l_pReturn->Add_Ref();
+                    l_pReturn = static_cast<IP7_Client *>(l_stShared.pPointer);
+                    if (l_pReturn)
+                    {
+                        l_pReturn->Add_Ref();
+                    }
+                }
+                else
+                {
+                    P7_Set_Last_Error(eP7_Error_SharedObjectInvalid);
+                    CShared::UnLink(l_pName);
                 }
             }
-            else
-            {
-                l_pReturn = NULL;
-            }
-        }
 
-        CShared::UnLock(l_pName);
+            CShared::UnLock(l_hSem);
+        }
 
         free(l_pName);
         l_pName = NULL;
+    }
+    else
+    {
+        P7_Set_Last_Error(eP7_Error_MemoryAllocation);
     }
 
     return l_pReturn;
@@ -227,8 +249,11 @@ P7_EXPORT IP7_Client * __cdecl P7_Get_Shared(const tXCHAR *i_pName)
 
 ////////////////////////////////////////////////////////////////////////////////
 //cbCrashHandler
-void __cdecl cbCrashHandler(int i_iType, void *i_pContext)
+void __cdecl cbCrashHandler(eCrashCode i_eCode, const void *i_pCrashContext, void *i_pUserContext)
 {
+    UNUSED_ARG(i_eCode);
+    UNUSED_ARG(i_pCrashContext);
+    UNUSED_ARG(i_pUserContext);
     P7_Exceptional_Flush();
 }//cbCrashHandler
 
@@ -237,7 +262,8 @@ void __cdecl cbCrashHandler(int i_iType, void *i_pContext)
 //P7_Set_Crash_Handler
 P7_EXPORT void __cdecl P7_Set_Crash_Handler()
 {
-    ChInstall(&cbCrashHandler);
+    ChInstall();
+    ChSetHandler(&cbCrashHandler);
 }//P7_Set_Crash_Handler
 
 
@@ -265,15 +291,24 @@ P7_EXPORT void __cdecl P7_Clr_Crash_Handler()
 //11) leave function to execute def. handler
 P7_EXPORT void __cdecl P7_Exceptional_Flush()
 {
-    //tBOOL  l_bReturn = FALSE;
-    tBOOL  l_bLock   = FALSE;
-    sCrash l_sCrash; //not initialized here
+    tBOOL         l_bLock      = FALSE;
+    sCrash        l_sCrash     = {}; 
+    tUINT32       l_uTimeHi    = 0;
+    tUINT32       l_uTimeLo    = 0;
+    tUINT64       l_qwProcTime = 0;
+    tBOOL         l_bTimeError = FALSE;
+    CShared::hSem l_hSem       = SHARED_SEM_NULL;
+
+
+    if (CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo))
+    {
+        l_qwProcTime = ((tUINT64)l_uTimeHi << 32) + (tUINT64)l_uTimeLo;
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     //trying to block shared memory
-    if (CShared::E_OK != CShared::Lock(CRASH_HANDLER_NAME, CRASH_LOCK_TIMEOUT)) 
+    if (CShared::E_OK != CShared::Lock(CRASH_HANDLER_NAME, l_hSem, CRASH_LOCK_TIMEOUT))
     {
-        //l_bReturn = FALSE;
         goto l_lblExit;
     }
 
@@ -285,29 +320,174 @@ P7_EXPORT void __cdecl P7_Exceptional_Flush()
                               )
        )
     {
-        //l_bReturn = FALSE;
         goto l_lblExit;
     }
 
-    for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
+    if (l_sCrash.qwTimeStamp == l_qwProcTime)
     {
-        if (l_sCrash.pClients[l_dwI])
+        for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
         {
-            l_sCrash.pClients[l_dwI]->Unshare();
-            l_sCrash.pClients[l_dwI]->Flush();
+            if (l_sCrash.pClients[l_dwI])
+            {
+                l_sCrash.pClients[l_dwI]->Unshare();
+                l_sCrash.pClients[l_dwI]->Close();
+            }
         }
     }
-
+    else
+    {
+        l_bTimeError = TRUE;
+    }
 
 l_lblExit:
+    if (l_bTimeError)
+    {
+        CShared::UnLink(CRASH_HANDLER_NAME);
+    }
+    else
+    {
+        CShared::Close(l_sCrash.hShared);
+    }
 
     if (l_bLock)
     {
-        CShared::UnLock(CRASH_HANDLER_NAME);
-        CShared::Close(l_sCrash.hShared);
+        CShared::UnLock(l_hSem);
     }
 }//P7_Exceptional_Flush
 
+
+////////////////////////////////////////////////////////////////////////////////
+//P7_Flush
+//0) Lock crash memory
+//1) Read crash memory
+//2) Call every client crash functions
+//3)  - every client set "Error" flag to prevent ext. access (add data, add/del channel)
+//4)  - every client call crash function on every channel
+//5)    - some channels will dump stack back trace & exception info
+//6)    - every channel close connection & set "Error" flag
+//7)  - every client write/deliver all buffers
+//8)  - every client release shared memory
+//9) unlock crash memory
+//10) release crash memory
+//11) leave function to execute def. handler
+P7_EXPORT void __cdecl P7_Flush()
+{
+    tBOOL         l_bLock      = FALSE;
+    sCrash        l_sCrash     = {};
+    tUINT32       l_uTimeHi    = 0;
+    tUINT32       l_uTimeLo    = 0;
+    tUINT64       l_qwProcTime = 0;
+    CShared::hSem l_hSem       = SHARED_SEM_NULL;
+
+
+    if (CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo))
+    {
+        l_qwProcTime = ((tUINT64)l_uTimeHi << 32) + (tUINT64)l_uTimeLo;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    //trying to block shared memory
+    if (CShared::E_OK != CShared::Lock(CRASH_HANDLER_NAME, l_hSem, CRASH_LOCK_TIMEOUT))
+    {
+        goto l_lblExit;
+    }
+
+    l_bLock = TRUE;
+
+    if (FALSE == CShared::Read(CRASH_HANDLER_NAME, 
+                               (tUINT8*)&l_sCrash, 
+                               (tUINT16)sizeof(l_sCrash)
+                              )
+       )
+    {
+        goto l_lblExit;
+    }
+
+    if (l_sCrash.qwTimeStamp == l_qwProcTime)
+    {
+        for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
+        {
+            if (l_sCrash.pClients[l_dwI])
+            {
+                l_sCrash.pClients[l_dwI]->Flush();
+            }
+        }
+    }
+
+l_lblExit:
+    if (l_bLock)
+    {
+        CShared::UnLock(l_hSem);
+    }
+}//P7_Exceptional_Flush
+
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+//                        Errors processing routines                          //
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+struct stP7_Error_Thread
+{
+    tUINT32  uThreadId;
+    eP7_Error eError;
+};
+
+class CTreeThreadErrors: public CRBTree<stP7_Error_Thread*, tUINT32>
+{
+public:
+    virtual ~CTreeThreadErrors() { Clear(); }
+
+protected:
+    virtual tBOOL Data_Release(stP7_Error_Thread *i_pData) { free(i_pData); return TRUE; }
+    //Return TRUE  - if (i_pKey < i_pData::key), FALSE - otherwise
+    tBOOL Is_Key_Less(tUINT32 i_pKey, stP7_Error_Thread *i_pData) { return (i_pKey < i_pData->uThreadId); }
+    //Return TRUE  - if (i_pKey == i_pData::key), FALSE - otherwise
+    tBOOL Is_Qual(tUINT32 i_pKey, stP7_Error_Thread *i_pData) { return (i_pKey == i_pData->uThreadId); }
+};
+
+
+static CTreeThreadErrors g_cErrorsTree;
+static CLock             g_cErrorLock; 
+
+////////////////////////////////////////////////////////////////////////////////
+P7_EXPORT eP7_Error __cdecl P7_Last_Error()
+{
+    CLock l_cLock(&g_cErrorLock);
+
+    eP7_Error l_eReturn = eP7_Error_None;
+
+    stP7_Error_Thread *l_pError = g_cErrorsTree.Find(CProc::Get_Thread_Id());
+    if (l_pError)
+    {
+        l_eReturn = l_pError->eError;
+        l_pError->eError = eP7_Error_None;
+    }
+
+    return l_eReturn;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+void __cdecl P7_Set_Last_Error(eP7_Error i_eError)
+{
+    CLock l_cLock(&g_cErrorLock);
+
+    tUINT32   l_uThreadId = CProc::Get_Thread_Id();
+
+    stP7_Error_Thread *l_pError = g_cErrorsTree.Find(l_uThreadId);
+    if (l_pError)
+    {
+        l_pError->eError = i_eError;
+    }
+    else
+    {
+        l_pError = (stP7_Error_Thread *)malloc(sizeof(stP7_Error_Thread));
+        l_pError->eError = i_eError;
+        l_pError->uThreadId = l_uThreadId;
+        g_cErrorsTree.Push(l_pError, l_uThreadId);
+    }
+}
 }//extern "C"
 
 
@@ -366,10 +546,40 @@ CClient::CClient(IP7_Client::eType i_eType,
     , m_bConnected(TRUE)
     , m_dwConnection_Resets(0)
     , m_eType(i_eType)
+    , m_pArgs(NULL)
+    , m_iArgsCnt(0)
+    , m_bFlushChannels(TRUE)
+
 {
     memset(m_pChannels, 0, sizeof(IP7C_Channel*)*USER_PACKET_CHANNEL_ID_MAX_SIZE);
     memset(&m_hCS,      0, sizeof(m_hCS));
     memset(&m_hCS_Reg,  0, sizeof(m_hCS_Reg));
+
+    if (    (i_pArgs)
+         && (i_iCount)
+       )
+    {
+        m_iArgsCnt = i_iCount;
+        m_pArgs    = (tXCHAR **)malloc(sizeof(tXCHAR *) * m_iArgsCnt);
+
+        if (m_pArgs)
+        {
+            for (int l_iI = 0; l_iI < m_iArgsCnt; l_iI ++)
+            {
+                m_pArgs[l_iI] = PStrDub(i_pArgs[l_iI]);
+            }
+        }
+    }
+
+
+    tXCHAR *l_pFlush = Get_Argument_Text_Value(m_pArgs, m_iArgsCnt, CLIENT_COMMAND_FLUSH_CHANNELS);
+
+    if (    (NULL != l_pFlush)
+         && (TM('0') == l_pFlush[0])
+       )
+    {
+        m_bFlushChannels = FALSE;
+    }
 
     LOCK_CREATE(m_hCS_Reg);
     LOCK_CREATE(m_hCS);
@@ -387,6 +597,19 @@ CClient::~CClient()
     {
         m_pLog->Release();
         m_pLog = NULL;
+    }
+
+    if (m_pArgs)
+    {
+        for (int l_iI = 0; l_iI < m_iArgsCnt; l_iI ++)
+        {
+            PStrFreeDub(m_pArgs[l_iI]);
+            m_pArgs[l_iI] = NULL;
+        }
+
+        free(m_pArgs);
+        m_pArgs    = NULL;
+        m_iArgsCnt = 0;
     }
 
     LOCK_DESTROY(m_hCS_Reg);
@@ -525,17 +748,51 @@ tBOOL CClient::Share(const tXCHAR *i_pName)
 
     if (NULL == m_hShared)
     {
-        void *l_pPointer = static_cast<IP7_Client*>(this);
-
         tUINT32 l_dwLen1 = PStrLen(CLIENT_SHARED_PREFIX);
         tUINT32 l_dwLen2 = PStrLen(i_pName);
         tXCHAR *l_pName = (tXCHAR *)malloc(sizeof(tXCHAR) * (l_dwLen1 + l_dwLen2 + 16));
 
         if (l_pName)
         {
+            sObjShared    l_stShared = {};
+            tUINT32       l_uTimeHi  = 0;
+            tUINT32       l_uTimeLo  = 0;
+            tBOOL         l_bCreate  = TRUE;
+            CShared::hSem l_hSem     = SHARED_SEM_NULL;
+
+            CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo);
+
             PStrCpy(l_pName, l_dwLen1 + l_dwLen2 + 16, CLIENT_SHARED_PREFIX);
             PStrCpy(l_pName + l_dwLen1, l_dwLen2 + 16, i_pName);
-            l_bReturn = CShared::Create(&m_hShared, l_pName, (tUINT8*)&l_pPointer, sizeof(l_pPointer));
+
+            JOURNAL_WARNING(m_pLog, TM("Shared memory {%s} registration error"), l_pName);
+            if (CShared::E_OK == CShared::Lock(l_pName, l_hSem, 250))
+            {
+                l_bCreate = FALSE; //it is already existing
+
+                if (CShared::Read(l_pName, (tUINT8*)&l_stShared, sizeof(l_stShared)))
+                {
+                    if (    (l_stShared.uProcTimeHi != l_uTimeHi)
+                         || (l_stShared.uProcTimeLo != l_uTimeLo)
+                       )
+                    {
+                        JOURNAL_ERROR(m_pLog, TM("Shared memory timestamp error, prev. session crashed or forget to release P7 objects?"));
+                        CShared::UnLink(l_pName);
+                        l_bCreate = TRUE;
+                    }
+                }
+                CShared::UnLock(l_hSem);
+            }
+
+            if (l_bCreate)
+            {
+                CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo);
+                l_stShared.pPointer    = static_cast<IP7_Client*>(this);
+                l_stShared.uProcTimeHi = l_uTimeHi;
+                l_stShared.uProcTimeLo = l_uTimeLo;
+                l_bReturn = CShared::Create(&m_hShared, l_pName, (tUINT8*)&l_stShared, sizeof(l_stShared));
+            }
+
             free(l_pName);
             l_pName = NULL;
         }
@@ -548,14 +805,87 @@ tBOOL CClient::Share(const tXCHAR *i_pName)
 
 
 ////////////////////////////////////////////////////////////////////////////////
+//Get_Argument()
+const tXCHAR *CClient::Get_Argument(const tXCHAR  *i_pName)
+{
+    return Get_Argument_Text_Value(m_pArgs, m_iArgsCnt, i_pName);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//Get_Channels_Count()
+size_t CClient::Get_Channels_Count()
+{
+    size_t l_szReturn = 0;
+
+    LOCK_ENTER(m_hCS_Reg);
+
+    for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
+    {
+        if (m_pChannels[l_dwI])
+        {
+            l_szReturn ++;
+        }
+    }
+    LOCK_EXIT(m_hCS_Reg);
+
+    return l_szReturn;
+}//Get_Channels_Count()
+
+
+////////////////////////////////////////////////////////////////////////////////
+//Get_Channel()
+IP7C_Channel *CClient::Get_Channel(size_t i_szIndex)
+{
+    IP7C_Channel *l_pReturn = NULL;
+    size_t        l_szCount = 0;
+
+    LOCK_ENTER(m_hCS_Reg);
+
+    for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
+    {
+        if (m_pChannels[l_dwI])
+        {
+            if (l_szCount == i_szIndex)
+            {
+                l_pReturn = m_pChannels[l_dwI];
+                l_pReturn->Add_Ref();
+                break;
+            }
+            else
+            {
+                l_szCount ++;
+            }
+        }
+    }
+    LOCK_EXIT(m_hCS_Reg);
+
+    return l_pReturn;
+}//Get_Channel()
+
+
+////////////////////////////////////////////////////////////////////////////////
 //Unshare()
 tBOOL CClient::Unshare()
 {
     LOCK_ENTER(m_hCS_Reg);
     if (m_hShared)
     {
-        CShared::Close(m_hShared);
-        m_hShared = NULL;
+        const tXCHAR *l_pName = CShared::GetName(m_hShared);
+        CShared::hSem l_hSem  = SHARED_SEM_NULL;
+
+        if (    (l_pName)
+             && (CShared::E_OK == CShared::Lock(l_pName, l_hSem, CRASH_LOCK_TIMEOUT))
+           )
+        {
+            CShared::Close(m_hShared);
+            m_hShared = NULL;
+            CShared::UnLock(l_hSem);
+        }
+        else
+        {
+            JOURNAL_ERROR(m_pLog, TM("Can't destroy shared memory"));
+        }
     }
     LOCK_EXIT(m_hCS_Reg); 
 
@@ -565,15 +895,13 @@ tBOOL CClient::Unshare()
 
 ////////////////////////////////////////////////////////////////////////////////
 //Init_Log
-eClient_Status CClient::Init_Log(tXCHAR **i_pArgs,
-                                 tINT32   i_iCount
-                                )
+eClient_Status CClient::Init_Log(tXCHAR **i_pArgs, tINT32 i_iCount)
 {
     tXCHAR          *l_pArg_Value   = NULL;
     IJournal::eLevel l_eVerbosity   = IJournal::eLEVEL_CRITICAL;
 
     l_pArg_Value = Get_Argument_Text_Value(i_pArgs, i_iCount,
-                                           (tXCHAR*)CLIENT_COMMAND_LOG_VERBOSITY
+                                           (const tXCHAR*)CLIENT_COMMAND_LOG_VERBOSITY
                                           );
     if (NULL == l_pArg_Value)
     {
@@ -633,61 +961,157 @@ l_lClean_Up:
 
 eClient_Status CClient::Init_Crash_Handler(tXCHAR **i_pArgs, tINT32 i_iCount)
 {
-    CShared::eLock l_eLock   = CShared::E_OK;
-    tBOOL          l_bResult = FALSE;
-    tBOOL          l_bLock   = FALSE;
+    CShared::eLock l_eLock      = CShared::E_OK;
+    tBOOL          l_bResult    = FALSE;
     sCrash         l_sCrash; //not initialized here
+    tUINT32        l_uTimeHi    = 0;
+    tUINT32        l_uTimeLo    = 0;
+    tUINT64        l_qwProcTime = 0;
+    CShared::hSem  l_hSem       = SHARED_SEM_NULL;
 
     UNUSED_ARG(i_pArgs);
     UNUSED_ARG(i_iCount);
 
-    // tXCHAR *l_pValue = NULL;
-    // 
-    // l_pValue = Get_Argument_Text_Value(i_pArgs, i_iCount,
-    //                                     (tXCHAR*)CLIENT_COMMAND_SIGNAL
-    //                                     );
-    // 
-    // if (    (NULL == l_pValue)
-    //         || (0 == PStrToInt(l_pValue))
-    //     )
-    // {
-    //     goto l_lblExit;
-    // }
+    if (CProc::Get_Process_Time(&l_uTimeHi, &l_uTimeLo))
+    {
+        l_qwProcTime = ((tUINT64)l_uTimeHi << 32) + (tUINT64)l_uTimeLo;
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     //trying to block shared memory
-    l_eLock = CShared::Lock(CRASH_HANDLER_NAME, CRASH_LOCK_TIMEOUT); //5 minutes
+    l_eLock = CShared::Lock(CRASH_HANDLER_NAME, l_hSem, CRASH_LOCK_TIMEOUT); //5 minutes
 
-    if (CShared::E_NOT_EXISTS == l_eLock) 
+    if (CShared::E_OK == l_eLock)
+    {
+        //if we are here it mean we are successfully get lock and now we need to read
+        //memory, update it and release lock
+        if (CShared::Read(CRASH_HANDLER_NAME, (tUINT8*)&l_sCrash, (tUINT16)sizeof(l_sCrash)))
+        {
+            if (l_sCrash.qwTimeStamp == l_qwProcTime)
+            {
+                for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
+                {
+                    if (NULL == l_sCrash.pClients[l_dwI])
+                    {
+                        l_sCrash.pClients[l_dwI] = this;
+                        l_sCrash.lReference ++;
+                        l_bResult = TRUE;
+                        break;
+                    }
+                }
+
+                //no free room in shared memory, exit !
+                if (l_bResult)
+                {
+                    if (FALSE == CShared::Write(CRASH_HANDLER_NAME,
+                                                (tUINT8*)&l_sCrash,
+                                                (tUINT16)sizeof(l_sCrash)
+                                               )
+                       )
+                    {
+                        JOURNAL_ERROR(m_pLog, TM("Can't write to crash shared memory"));
+                        l_bResult = FALSE;
+                    }
+                }
+                else
+                {
+                    JOURNAL_ERROR(m_pLog, TM("There is no free space for client"));
+                }
+            }
+            else
+            {
+                JOURNAL_ERROR(m_pLog, TM("Shared memory timestamp missmatch, it wasn't closed properly last time?"));
+                CShared::UnLink(CRASH_HANDLER_NAME);
+                l_eLock = CShared::E_NOT_EXISTS; //going to create new shared memory space
+            }
+        }
+        else
+        {
+            JOURNAL_ERROR(m_pLog, TM("Can't read crash shared memory"));
+        }
+
+        CShared::UnLock(l_hSem);
+    } //if (CShared::E_OK == l_eLock)
+
+    if (CShared::E_NOT_EXISTS == l_eLock)
     {
         //it is not exists - create new one/////////////////////////////////////
         memset(&l_sCrash, 0, sizeof(l_sCrash));
         l_sCrash.lReference  = 1;
+        l_sCrash.qwTimeStamp = l_qwProcTime;
         l_sCrash.pClients[0] = this;
         
-        if (FALSE != CShared::Create(&l_sCrash.hShared,
-                                     CRASH_HANDLER_NAME,
-                                     (tUINT8*)&l_sCrash, 
-                                     (tUINT16)sizeof(l_sCrash)
-                                    )
+        JOURNAL_INFO(m_pLog, TM("Try to create shared lock"));
+
+        if (CShared::Create(&l_sCrash.hShared,
+                            CRASH_HANDLER_NAME,
+                            (tUINT8*)&l_sCrash,
+                            (tUINT16)sizeof(l_sCrash)
+                           )
            )
         {
             //successful creation of shared memory/////////////////////////////
-            JOURNAL_DEBUG(m_pLog, TM("Register new crash handler"));
-
+            JOURNAL_INFO(m_pLog, TM("Register new crash handler"));
             l_bResult = TRUE;
-            goto l_lblExit;
         }
         else //creation of shared memory failed 
         {
+            JOURNAL_WARNING(m_pLog, TM("CShared::Create failed, try to lock"));
             //it wasn't possible to create shared memory, possibly it was created
             //by somebody else, trying to get lock
-            l_eLock = CShared::Lock(CRASH_HANDLER_NAME, CRASH_LOCK_TIMEOUT); //5 minutes
-            if (CShared::E_OK != l_eLock)
+            l_eLock = CShared::Lock(CRASH_HANDLER_NAME, l_hSem, CRASH_LOCK_TIMEOUT); //5 minutes
+            if (CShared::E_OK == l_eLock)
+            {
+                //if we are here it mean we are successfully get lock and now we need to read
+                //memory, update it and release lock
+                if (CShared::Read(CRASH_HANDLER_NAME, (tUINT8*)&l_sCrash, (tUINT16)sizeof(l_sCrash)))
+                {
+                    if (l_sCrash.qwTimeStamp == l_qwProcTime)
+                    {
+                        for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
+                        {
+                            if (NULL == l_sCrash.pClients[l_dwI])
+                            {
+                                l_sCrash.pClients[l_dwI] = this;
+                                l_sCrash.lReference ++;
+                                l_bResult = TRUE;
+                                break;
+                            }
+                        }
+
+                        //no free room in shared memory, exit !
+                        if (l_bResult)
+                        {
+                            if (FALSE == CShared::Write(CRASH_HANDLER_NAME,
+                                                        (tUINT8*)&l_sCrash,
+                                                        (tUINT16)sizeof(l_sCrash)
+                                                       )
+                               )
+                            {
+                                JOURNAL_ERROR(m_pLog, TM("Can't write to crash shared memory"));
+                                l_bResult = FALSE;
+                            }
+                        }
+                    }
+                    else //if (l_sCrash.qwTimeStamp != l_qwProcTime)
+                    {
+                        JOURNAL_ERROR(m_pLog, TM("Shared memory timestamp missmatch, it wasn't closed properly last time?"));
+                        CShared::UnLink(CRASH_HANDLER_NAME);
+                        l_eLock = CShared::E_NOT_EXISTS; //going to create new shared memory space
+                    }
+                }
+                else
+                {
+                    JOURNAL_ERROR(m_pLog, TM("Can't read crash shared memory"));
+                    l_bResult = FALSE;
+                }
+
+                CShared::UnLock(l_hSem);
+            }
+            else
             {
                 JOURNAL_ERROR(m_pLog, TM("Can't get lock for crash handler"));
                 l_bResult = FALSE;
-                goto l_lblExit;
             }
         }
     } //if (CShared::E_NOT_EXISTS == l_eLock) 
@@ -696,60 +1120,6 @@ eClient_Status CClient::Init_Crash_Handler(tXCHAR **i_pArgs, tINT32 i_iCount)
         //if it is internal errors//////////////////////////////////////////////
         JOURNAL_ERROR(m_pLog, TM("Can't get lock for crash handler"));
         l_bResult = FALSE;
-        goto l_lblExit;
-    }
-
-    //if we are here it mean we are successfully get lock and now we need to read
-    //memory, update it and release lock
-
-    l_bLock = TRUE;
-
-    if (FALSE == CShared::Read(CRASH_HANDLER_NAME, 
-                               (tUINT8*)&l_sCrash, 
-                               (tUINT16)sizeof(l_sCrash)
-                              )
-       )
-    {
-        JOURNAL_ERROR(m_pLog, TM("Can't read crash shared memory"));
-        l_bResult = FALSE; 
-        goto l_lblExit;
-    }
-
-    for (tUINT32 l_dwI = 0; l_dwI < CRASH_CLIENTS_COUNT; l_dwI++)
-    {
-        if (NULL == l_sCrash.pClients[l_dwI])
-        {
-            l_sCrash.pClients[l_dwI] = this;
-            l_sCrash.lReference ++;
-            l_bResult = TRUE;
-            break;
-        }
-    }
-
-    //no free room in shared memory, exit !
-    if (FALSE == l_bResult)
-    {
-        JOURNAL_ERROR(m_pLog, TM("Can't find client instance"));
-        goto l_lblExit;
-    }
-
-    if (FALSE == CShared::Write(CRASH_HANDLER_NAME, 
-                                (tUINT8*)&l_sCrash, 
-                                (tUINT16)sizeof(l_sCrash)
-                               )
-       )
-    {
-        JOURNAL_ERROR(m_pLog, TM("Can't write to crash shared memory"));
-        l_bResult = FALSE; 
-        goto l_lblExit;
-    }
-
-
-l_lblExit:
-
-    if (l_bLock)
-    {
-        CShared::UnLock(CRASH_HANDLER_NAME);
     }
 
     if (l_bResult)
@@ -775,10 +1145,11 @@ l_lblExit:
 //6) unlock shared memory (if memory was deleted - it will just return error)
 eClient_Status CClient::Uninit_Crash_Handler()
 {
-    tBOOL   l_bReturn   = FALSE;
-    tBOOL   l_bLock     = FALSE;
-    tBOOL   l_bCrashMem = FALSE;
-    sCrash  l_sCrash; //not initialized here
+    tBOOL         l_bReturn   = FALSE;
+    tBOOL         l_bLock     = FALSE;
+    tBOOL         l_bCrashMem = FALSE;
+    sCrash        l_sCrash; //not initialized here
+    CShared::hSem l_hSem      = SHARED_SEM_NULL;
 
     LOCK_ENTER(m_hCS_Reg);
     l_bCrashMem = m_bCrashMem;
@@ -792,7 +1163,7 @@ eClient_Status CClient::Uninit_Crash_Handler()
 
     ////////////////////////////////////////////////////////////////////////////
     //trying to block shared memory
-    if (CShared::E_OK != CShared::Lock(CRASH_HANDLER_NAME, CRASH_LOCK_TIMEOUT)) 
+    if (CShared::E_OK != CShared::Lock(CRASH_HANDLER_NAME, l_hSem, CRASH_LOCK_TIMEOUT))
     {
         JOURNAL_ERROR(m_pLog, TM("Can't get lock for crash handler"));
         l_bReturn = FALSE;
@@ -844,17 +1215,14 @@ eClient_Status CClient::Uninit_Crash_Handler()
     }
     else
     {
-        CShared::UnLock(CRASH_HANDLER_NAME);
         CShared::Close(l_sCrash.hShared);
-        l_bLock = FALSE;
     }
-
 
 l_lblExit:
 
     if (l_bLock)
     {
-        CShared::UnLock(CRASH_HANDLER_NAME);
+        CShared::UnLock(l_hSem);
     }
 
     return ECLIENT_STATUS_OK;

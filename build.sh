@@ -1,25 +1,35 @@
 #!/bin/bash
 
-echo "Script for building:"
-echo " - P7 library"
-echo " - Examples"
-echo " - Speed test"
-echo " - Tracing tests"
-echo "------------------------------------------------------------"
+VERBOSE=0
+DEBUG=0
+CMAKE_ADD_OPTS=""
+MAKE_ADD_OPTS=""
+
+CURDIR="$(dirname "$(readlink -f "$0")")"
+
+usage() { echo "Usage: $0 [-v] [-d]" 1>&2; }
 
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export BUILD_DIR="$(pwd)/baical_p7"
+build()
+{
+  [ $VERBOSE == 1 ] && MAKE_ADD_OPTS="${MAKE_ADD_OPTS} VERBOSE=1"
+  [ $DEBUG == 1 ] && CMAKE_ADD_OPTS="${CMAKE_ADD_OPTS} -DCMAKE_BUILD_TYPE=Debug"
+  set -e
+  set -o xtrace
 
-if [ $# -lt 2 ] ; then
-   echo "run [${SCRIPT_DIR}/build.sh clean] to make cleanup"
-fi
+  # mkdir build 2> /dev/null
 
-echo "P7----------------------------------------------------------"
+  export CCACHE_DISABLE=1
 
-for i in Sources Tests/Speed Tests/Trace Examples/Cpp Examples/C; do
-	echo "${i}-------------------------------------------------------"
-	cd "${SCRIPT_DIR}/$i"
-	make $1
-done
+  cmake \
+        -DBUILD_TESTS=true \
+        -DCMAKE_INSTALL_PREFIX="install" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=On \
+        ${CMAKE_ADD_OPTS} \
+        -B build \
+        -S . && \
+  cmake --build build --parallel --clean-first
 
+}
+
+build

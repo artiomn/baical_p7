@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -49,7 +49,9 @@ public:
 
     tBOOL Get_Status(sP7C_Status *o_pStatus);
     tBOOL Get_Info(sP7C_Info *o_pInfo);
-    tBOOL Flush();
+    tBOOL Close();
+    void  Flush();
+
 };
 
 

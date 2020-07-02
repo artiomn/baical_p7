@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -24,9 +24,16 @@
 #include "ClFile.h"
 
 #define  THREAD_IDLE_TIMEOUT                                                (10)
+#define  THREAD_WRITE_TIMEOUT                                            (15000)
 
-#define  THREAD_EXIT_SIGNAL                                    (MEVENT_SIGNAL_0)
-#define  THREAD_DATA_SIGNAL                                (MEVENT_SIGNAL_0 + 1)
+
+enum eThreadsEvents
+{
+    eThreadEventExit = MEVENT_SIGNAL_0,
+    eThreadEventHasData,
+    eThreadEventDataFlush,
+    eThreadEventsCount = 3
+};
 
 #define  MIN_BUFFER_SIZE                                                 (16384)
 #define  MAX_BUFFER_SIZE                                                (131072)
@@ -38,6 +45,7 @@
 
 #define  DEF_POOL_SIZE                                    (MAX_BUFFER_SIZE * 16)
 #define  MIN_POOL_SIZE                     (MIN_BUFFER_SIZE * MIN_BUFFERS_COUNT)
+
 
 #define  P7_EXT                                                        TM("p7d")
 
@@ -60,6 +68,8 @@ CClFile::CClFile(tXCHAR **i_pArgs, tINT32 i_iCount)
     , m_dwFile_Tick(0)
     , m_qwFile_Size(0)
     , m_dwFiles_Max_Count(DEF_FILES_COUNT)
+    , m_qwFiles_Max_Size(0u)
+    , m_dwIndex(0)
 {
     memset(&m_cHeader,  0, sizeof(m_cHeader));
 
@@ -101,7 +111,7 @@ CClFile::~CClFile()
 {
     Uninit_Crash_Handler();
 
-    Flush();
+    Close();
 
     if (m_pBuffer_Current)
     {
@@ -113,6 +123,7 @@ CClFile::~CClFile()
     m_cBuffer_Ready.Clear(TRUE);
 
     m_cFiles.Clear(TRUE);
+    m_cSecondsList.Clear(TRUE);
 
     CClient::Unshare();
 }//~CClFile()
@@ -218,6 +229,7 @@ eClient_Status CClFile::Init_Pool(tXCHAR **i_pArgs,
                       l_dwBuffers_Count
                     );
         l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
+        P7_Set_Last_Error(eP7_Error_UserSettings);
         goto l_lblExit;
     }
 
@@ -237,6 +249,7 @@ eClient_Status CClFile::Init_Pool(tXCHAR **i_pArgs,
         {
             JOURNAL_ERROR(m_pLog, TM("Pool: Memory calculation failed"));
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
             goto l_lblExit;
         }
     }
@@ -261,6 +274,7 @@ eClient_Status CClFile::Init_Pool(tXCHAR **i_pArgs,
     {
         JOURNAL_ERROR(m_pLog, TM("Pool: Not enough memory"));
         l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
+        P7_Set_Last_Error(eP7_Error_UserSettings);
         goto l_lblExit;
     }
 
@@ -286,7 +300,7 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
     ////////////////////////////////////////////////////////////////////////////
     //get maximum count of the log files
     l_pArgV = Get_Argument_Text_Value(i_pArgs, i_iCount,
-                                      (tXCHAR*)CLIENT_COMMAND_LINE_FILES_MAX
+                                      (tXCHAR*)CLIENT_COMMAND_LINE_FILES_COUNT_MAX
                                      );
     if (l_pArgV)
     {
@@ -298,6 +312,15 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
         {
             m_dwFiles_Max_Count = DEF_FILES_COUNT;
         }
+    }
+
+
+    l_pArgV = Get_Argument_Text_Value(i_pArgs, i_iCount,
+                                      (tXCHAR*)CLIENT_COMMAND_LINE_FILES_SIZE_MAX
+                                     );
+    if (l_pArgV)
+    {
+        m_qwFiles_Max_Size = (tUINT64)PStrToInt(l_pArgV) * 1048576ull;
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -321,13 +344,16 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
         {
             JOURNAL_ERROR(m_pLog, TM("Can't create directory: %s"), l_pArgV);
             l_eReturn = ECLIENT_STATUS_NOT_ALLOWED;
+            P7_Set_Last_Error(eP7_Error_FolderCreation);
             goto l_lblExit;
         }
     }
 
     ////////////////////////////////////////////////////////////////////////////
     //enumerate files & sorting ....
-    if (DEF_FILES_COUNT != m_dwFiles_Max_Count)
+    if (    (DEF_FILES_COUNT != m_dwFiles_Max_Count)
+         || (m_qwFiles_Max_Size)
+       )
     {
         CFSYS::Enumerate_Files(&m_cFiles, &m_pDir, TM("*.") P7_EXT, 0);
 
@@ -366,7 +392,8 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
     l_eReturn = Create_File();
     if (ECLIENT_STATUS_OK != l_eReturn)
     {
-        JOURNAL_ERROR(m_pLog, TM("File creation failed"), l_pArgV);
+        P7_Set_Last_Error(eP7_Error_FileCreation);
+        JOURNAL_ERROR(m_pLog, TM("File creation failed {%s}"), l_pArgV);
         goto l_lblExit;
     }
 
@@ -393,6 +420,10 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
             {
                 m_eRolling = EROLLING_MEGABYTES;
             }
+            else if (0 == PStrICmp(l_pSuffix, TM("tm")))
+            {
+                m_eRolling = EROLLING_TIME;
+            }
             else
             {
                 l_bError = TRUE;
@@ -408,11 +439,23 @@ eClient_Status CClFile::Init_File(tXCHAR **i_pArgs,
 
         if (FALSE == l_bError)
         {
-            m_qwRolling_Value = PStrToInt(l_cRolling.Get());
-
-            if (0 >= m_qwRolling_Value)
+            if (m_eRolling != EROLLING_TIME)
             {
-                m_eRolling = EROLLING_NONE;
+                m_qwRolling_Value = PStrToInt(l_cRolling.Get());
+
+                if (0 >= m_qwRolling_Value)
+                {
+                    m_eRolling = EROLLING_NONE;
+                    l_bError   = TRUE;
+                }
+            }
+            else
+            {
+                if (!Parse_Rolling_Time(l_cRolling.Get()))
+                {
+                    m_eRolling = EROLLING_NONE;
+                    l_bError   = TRUE;
+                }
             }
         }
 
@@ -455,8 +498,9 @@ eClient_Status CClFile::Init_Thread(tXCHAR **i_pArgs,
 
     if (ECLIENT_STATUS_OK == l_eReturn)
     {
-        if (FALSE == m_cEvent.Init(2, EMEVENT_SINGLE_AUTO, EMEVENT_MULTI))
+        if (FALSE == m_cEvent.Init(eThreadEventsCount, EMEVENT_SINGLE_AUTO, EMEVENT_MULTI, EMEVENT_SINGLE_AUTO))
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Exit event wasn't created !"));
         }
@@ -471,6 +515,7 @@ eClient_Status CClFile::Init_Thread(tXCHAR **i_pArgs,
                                      )
            )
         {
+            P7_Set_Last_Error(eP7_Error_OS);
             l_eReturn      = ECLIENT_STATUS_INTERNAL_ERROR;
             JOURNAL_ERROR(m_pLog, TM("Communication thread wasn't created !"));
         }
@@ -514,20 +559,20 @@ eClient_Status CClFile::Create_File()
     {
         PSPrint(l_pFile_Name, 
                 LENGTH(l_pFile_Name), 
-                TM("/%04d%02d%02d-%02d%02d%02d%02d.") P7_EXT,
+                TM("/%04d%02d%02d-%02d%02d%02d.%03d.") P7_EXT,
                 l_dwYear, 
                 l_dwMonth,
                 l_dwDay,
                 l_dwHr,
                 l_dwMin,
                 l_dwSec,
-                l_dwmSec
+                m_dwIndex
                );
 
         l_cFilePath.Set(m_pDir.Get());
         l_cFilePath.Append(1, l_pFile_Name);
 
-        l_dwmSec ++;
+        m_dwIndex ++;
     } while (TRUE == CFSYS::File_Exists(l_cFilePath.Get()));
 
     if (FALSE == m_cFile.Open(l_cFilePath.Get(), 
@@ -538,26 +583,68 @@ eClient_Status CClFile::Create_File()
         JOURNAL_ERROR(m_pLog, TM("Can't create file: %s"), l_cFilePath.Get());
         l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
     }
-    else if (DEF_FILES_COUNT != m_dwFiles_Max_Count)
+    else 
     {
         m_cFiles.Add_After(m_cFiles.Get_Last(), new CWString(l_cFilePath.Get()));
 
-        while (m_dwFiles_Max_Count < m_cFiles.Count())
+        if (DEF_FILES_COUNT != m_dwFiles_Max_Count)
         {
-            pAList_Cell l_pEl   = m_cFiles.Get_First();
-            CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
-            if (l_pPath)
+            while (m_dwFiles_Max_Count < m_cFiles.Count())
             {
-                if (!CFSYS::Delete_File(l_pPath->Get()))
+                pAList_Cell l_pEl   = m_cFiles.Get_First();
+                CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
+                if (l_pPath)
                 {
-                    JOURNAL_ERROR(m_pLog, 
-                                  TM("Can't delete file: %s"), 
-                                  l_pPath->Get()
-                                 );
+                    if (!CFSYS::Delete_File(l_pPath->Get()))
+                    {
+                        JOURNAL_ERROR(m_pLog, TM("Can't delete file: %s"), l_pPath->Get());
+                    }
+                }
+
+                m_cFiles.Del(l_pEl, TRUE);
+            }
+        }
+
+        if (0 != m_qwFiles_Max_Size)
+        {
+            pAList_Cell l_pEl = NULL;
+            tUINT64     l_qwTotalSize = 0;
+            tUINT64     l_qwFileSize = 0;
+
+            while ((l_pEl = m_cFiles.Get_Next(l_pEl)))
+            {
+                CWString *l_pPath = m_cFiles.Get_Data(l_pEl);
+                if (l_pPath)
+                {
+                    l_qwTotalSize += CFSYS::Get_File_Size(l_pPath->Get());
                 }
             }
 
-            m_cFiles.Del(l_pEl, TRUE);
+            while (l_qwTotalSize > ((tUINT64)m_qwFiles_Max_Size))
+            {
+                pAList_Cell l_pEl = m_cFiles.Get_First();
+                CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
+                if (l_pPath)
+                {
+                    l_qwFileSize = CFSYS::Get_File_Size(l_pPath->Get());
+
+                    if (l_qwFileSize < l_qwTotalSize)
+                    {
+                        l_qwTotalSize -= l_qwFileSize;
+                    }
+                    else
+                    {
+                        l_qwTotalSize = 0ull;
+                    }
+
+                    if (!CFSYS::Delete_File(l_pPath->Get()))
+                    {
+                        JOURNAL_ERROR(m_pLog, TM("Can't delete file: %s"), l_pPath->Get());
+                    }
+                }
+
+                m_cFiles.Del(l_pEl, TRUE);
+            }
         }
     }
 
@@ -565,6 +652,79 @@ eClient_Status CClFile::Create_File()
 
     return l_eReturn;
 }// Create_File
+
+
+////////////////////////////////////////////////////////////////////////////////
+//Parse_Rolling_Time
+tBOOL CClFile::Parse_Rolling_Time(const tXCHAR *i_pTime)
+{
+    const tXCHAR *l_pIter   = i_pTime;
+    const tXCHAR *l_pBegin  = i_pTime;
+    tBOOL         l_bReturn = TRUE;
+
+    while (*l_pIter)
+    {
+        tUINT32 l_uiSeconds = 0;
+        tUINT32 l_uiValue   = 0;
+
+        l_pBegin = l_pIter; //scan hours
+        while (    (*l_pIter >= TM('0')) 
+                && (*l_pIter <= TM('9'))
+                )
+        {
+            l_uiValue = l_uiValue * 10 + (*l_pIter - TM('0'));
+            l_pIter ++;
+        }
+
+        if (l_pBegin == l_pIter) //no digits
+        {
+            l_bReturn = FALSE;
+            break;
+        }
+
+        l_uiSeconds = l_uiValue * 3600; 
+                    
+        if (*l_pIter != TM(':')) //error
+        {
+            l_bReturn = FALSE;
+            break;
+        }
+
+        l_pIter++;
+
+        l_pBegin  = l_pIter; //scan minutes
+        l_uiValue = 0;
+        while (    (*l_pIter >= TM('0'))
+                && (*l_pIter <= TM('9'))
+                )
+        {
+            l_uiValue = l_uiValue * 10 + (*l_pIter - TM('0'));
+            l_pIter ++;
+        }
+
+        if (l_pBegin == l_pIter) //no digits
+        {
+            l_bReturn = FALSE;
+            break;
+        }
+
+        l_uiSeconds += l_uiValue * 60; 
+
+        m_cSecondsList.Add_After(m_cSecondsList.Get_Last(), l_uiSeconds);
+
+        if (*l_pIter == TM(','))
+        {
+            l_pIter++;
+        }
+    }
+
+    if (!m_cSecondsList.Count())
+    {
+        l_bReturn = FALSE;
+    }
+
+    return l_bReturn;
+}//Parse_Rolling_Time
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -706,9 +866,8 @@ eClient_Status CClFile::Sent(tUINT32          i_dwChannel_ID,
                         m_cBuffer_Ready.Add_After(m_cBuffer_Ready.Get_Last(), 
                                                   m_pBuffer_Current
                                                  );
-                        m_qwFile_Size    += m_pBuffer_Current->szUsed;
                         m_pBuffer_Current = NULL;
-                        m_cEvent.Set(THREAD_DATA_SIGNAL);
+                        m_cEvent.Set(eThreadEventHasData);
                     }
                 }
             }
@@ -726,9 +885,8 @@ eClient_Status CClFile::Sent(tUINT32          i_dwChannel_ID,
                 m_cBuffer_Ready.Add_After(m_cBuffer_Ready.Get_Last(), 
                                           m_pBuffer_Current
                                          );
-                m_qwFile_Size    += m_pBuffer_Current->szUsed;
                 m_pBuffer_Current = NULL;
-                m_cEvent.Set(THREAD_DATA_SIGNAL);
+                m_cEvent.Set(eThreadEventHasData);
             }
         } //while ( (m_pBuffer_Current) && (i_dwCount) )
     } //while (FALSE == l_bExit)
@@ -767,7 +925,7 @@ tBOOL CClFile::Get_Info(sP7C_Info *o_pInfo)
 
 ////////////////////////////////////////////////////////////////////////////////
 //Flush
-tBOOL CClFile::Flush()
+tBOOL CClFile::Close()
 {
     tBOOL l_bStack_Trace = TRUE;
 
@@ -777,18 +935,21 @@ tBOOL CClFile::Flush()
     l_sStatus.bConnected = FALSE;
     l_sStatus.dwResets   = 0;
 
-    LOCK_ENTER(m_hCS_Reg);
-    for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
+    if (m_bFlushChannels)
     {
-        if (m_pChannels[l_dwI])
+        LOCK_ENTER(m_hCS_Reg);
+        for (tUINT32 l_dwI = 0; l_dwI < USER_PACKET_CHANNEL_ID_MAX_SIZE; l_dwI++)
         {
-            m_pChannels[l_dwI]->On_Flush(l_dwI, &l_bStack_Trace);
-            m_pChannels[l_dwI]->On_Status(l_dwI, &l_sStatus);
+            if (m_pChannels[l_dwI])
+            {
+                m_pChannels[l_dwI]->On_Flush(l_dwI, &l_bStack_Trace);
+                m_pChannels[l_dwI]->On_Status(l_dwI, &l_sStatus);
+            }
         }
+        LOCK_EXIT(m_hCS_Reg);
     }
-    LOCK_EXIT(m_hCS_Reg);
 
-    m_cEvent.Set(THREAD_EXIT_SIGNAL);
+    m_cEvent.Set(eThreadEventExit);
 
     if (m_bThread)
     {
@@ -861,6 +1022,14 @@ tBOOL CClFile::Flush()
 
     return TRUE;
 }//Flush
+
+
+////////////////////////////////////////////////////////////////////////////////
+//Flush
+void CClFile::Flush()
+{
+    m_cEvent.Set(eThreadEventDataFlush);
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1040,16 +1209,18 @@ void CClFile::Routine()
     tUINT32     l_dwIteration    = 0;
     tBOOL       l_bRoll          = FALSE;
     sBuffer    *l_pBuffer        = NULL;
+    tUINT32     l_uiSecond       = GetSecondOfDay(); 
+    tUINT32     l_uWriteTick     = GetTickCount();
 
     while (FALSE == l_bExit)
     {
         l_dwSignal = m_cEvent.Wait(l_dwWait_TimeOut);
 
-        if (THREAD_EXIT_SIGNAL == l_dwSignal)
-        {
-            l_bExit = TRUE;
-        }
-        else if (THREAD_DATA_SIGNAL == l_dwSignal) //one buffer to write!
+        if (    (eThreadEventHasData == l_dwSignal) //one buffer to write!
+             || (    (MEVENT_TIME_OUT == l_dwSignal)
+                  && (CTicks::Difference(GetTickCount(), l_uWriteTick) > THREAD_WRITE_TIMEOUT)
+                )
+           )
         {
             l_dwWait_TimeOut = 0;
 
@@ -1062,15 +1233,23 @@ void CClFile::Routine()
 
             if (    (EROLLING_MEGABYTES == m_eRolling)
                  && (m_qwRolling_Value <= m_qwFile_Size)
-                )
+               )
             {
                 l_bRoll = TRUE;
             }
             else
             {
-                l_pEl     = m_cBuffer_Ready.Get_First();
-                l_pBuffer = m_cBuffer_Ready.Get_Data(l_pEl);
-                m_cBuffer_Ready.Del(l_pEl, FALSE);
+                l_pEl = m_cBuffer_Ready.Get_First();
+                if (l_pEl)
+                {
+                    l_pBuffer = m_cBuffer_Ready.Get_Data(l_pEl);
+                    m_cBuffer_Ready.Del(l_pEl, FALSE);
+                }
+                else
+                {
+                    l_pBuffer = m_pBuffer_Current;
+                    m_pBuffer_Current = 0;
+                }
             }
 
             LOCK_EXIT(m_hCS); 
@@ -1079,6 +1258,8 @@ void CClFile::Routine()
             //writing data
             if (l_pBuffer)
             {
+                m_qwFile_Size += l_pBuffer->szUsed;
+
                 if (    (m_bConnected)
                      && (l_pBuffer->szUsed > m_cFile.Write(l_pBuffer->pBuffer,
                                                            l_pBuffer->szUsed, 
@@ -1105,18 +1286,64 @@ void CClFile::Routine()
             {
                 Roll();
             }
+
+            l_uWriteTick = GetTickCount();
         }
         else if (MEVENT_TIME_OUT == l_dwSignal)
         {
             l_dwWait_TimeOut = THREAD_IDLE_TIMEOUT;
         }
-
-        if (    (EROLLING_HOURS == m_eRolling)
-             && (0 == (l_dwIteration & 0xF))
-             && (CTicks::Difference(GetTickCount(), m_dwFile_Tick) > m_qwRolling_Value)
-           )
+        else if (eThreadEventExit == l_dwSignal)
         {
-            Roll();
+            l_bExit = TRUE;
+        }
+        else if (eThreadEventDataFlush == l_dwSignal)
+        {
+            LOCK_ENTER(m_hCS);
+            if (    (m_pBuffer_Current)
+                 && (m_pBuffer_Current->szUsed)
+               )
+            {
+                m_cBuffer_Ready.Add_After(m_cBuffer_Ready.Get_Last(), m_pBuffer_Current);
+                m_pBuffer_Current = NULL;
+                m_cEvent.Set(eThreadEventHasData);
+            }
+            LOCK_EXIT(m_hCS);
+        }
+
+
+        if (EROLLING_HOURS == m_eRolling)
+        {
+            if (    (0 == (l_dwIteration & 0x3F))
+                 && (CTicks::Difference(GetTickCount(), m_dwFile_Tick) > m_qwRolling_Value)
+               )
+            {
+                Roll();
+                l_uWriteTick = GetTickCount();
+            }
+        }
+        else if (EROLLING_TIME == m_eRolling)
+        {
+            if (0 == (l_dwIteration & 0x3F))
+            {
+                tUINT32     l_uiNextSecond = GetSecondOfDay(); 
+                pAList_Cell l_pEl         = NULL;
+
+                while ((l_pEl = m_cSecondsList.Get_Next(l_pEl)))
+                {
+                    tUINT32 l_uiIem = m_cSecondsList.Get_Data(l_pEl);
+                    if (    (l_uiSecond <= l_uiIem)
+                         && (l_uiNextSecond > l_uiIem)
+                       )
+                    {
+                        Roll();
+                        l_uWriteTick = GetTickCount();
+                        break;
+                    }
+                }
+
+                l_uiSecond = l_uiNextSecond;
+            }
         }
 
         l_dwIteration++;

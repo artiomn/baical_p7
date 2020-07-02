@@ -13,10 +13,7 @@ g_lClients = [];
 
 #loading library into module
 if os.name == "nt":
-    if sizeof(c_voidp) == 4:
-        g_hDll = cdll.LoadLibrary(os.environ['P7_BIN'] + "/P7x32.dll");
-    else:
-        g_hDll = cdll.LoadLibrary(os.environ['P7_BIN'] + "/P7x64.dll");
+    g_hDll = cdll.LoadLibrary(os.environ['P7_BIN'] + "/p7-shared.dll");
         
     ############################################################################
     #>>>UTF()
@@ -27,7 +24,7 @@ if os.name == "nt":
 elif os.name == "posix":
     os_charp = c_char_p;
     
-    g_hDll = cdll.LoadLibrary(os.environ['P7_BIN'] + "/libP7.so");
+    g_hDll = cdll.LoadLibrary(os.environ['P7_BIN'] + "/libp7-shared.so");
 
     ############################################################################
     #>>>UTF()
@@ -56,6 +53,10 @@ Client_Share           = g_hDll.P7_Client_Share
 Client_Share.restype   = c_uint
 Client_Share.argtypes  = [c_void_p, os_charp]
 
+#loading P7_Client_Flush function
+Client_Flush           = g_hDll.P7_Client_Flush
+Client_Flush.argtypes  = [c_void_p]
+
 #loading P7_Client_Add_Ref function
 Client_Add_Ref          = g_hDll.P7_Client_Add_Ref
 Client_Add_Ref.restype  = c_int
@@ -68,6 +69,10 @@ Client_Release.argtypes = [c_void_p]
 
 #loading P7_Exceptional_Flush function
 Exceptional_Flush       = g_hDll.P7_Exceptional_Flush
+
+#loading P7_Flush function
+Flush                   = g_hDll.P7_Flush
+
    
 ################################################################################
 #                            P7 telemetry
@@ -90,12 +95,12 @@ Telemetry_Get_Shared.argtypes = [os_charp]
 #loading P7_Telemetry_Create_Counter function
 Telemetry_Create_Counter          = g_hDll.P7_Telemetry_Create_Counter
 Telemetry_Create_Counter.restype  = c_uint
-Telemetry_Create_Counter.argtypes = [c_void_p, os_charp, c_longlong, c_longlong, c_longlong, c_ubyte, c_void_p]
+Telemetry_Create_Counter.argtypes = [c_void_p, os_charp, c_double, c_double, c_double, c_double, c_int, c_void_p]
     
 #loading P7_Telemetry_Create_Counter function
 Telemetry_Put_Value          = g_hDll.P7_Telemetry_Put_Value
 Telemetry_Put_Value.restype  = c_uint
-Telemetry_Put_Value.argtypes = [c_void_p, c_ubyte, c_longlong]
+Telemetry_Put_Value.argtypes = [c_void_p, c_ushort, c_double]
 
 #loading P7_Telemetry_Find_Counter function
 Telemetry_Find_Counter          = g_hDll.P7_Telemetry_Find_Counter
@@ -121,7 +126,7 @@ Telemetry_Release.argtypes = [c_void_p]
 #loading P7_Trace_Create function
 Trace_Create           = g_hDll.P7_Trace_Create
 Trace_Create.restype   = c_void_p
-Trace_Create.argtypes  = [c_void_p, os_charp]
+Trace_Create.argtypes  = [c_void_p, os_charp, c_void_p]
 
 Trace_Register_Module          = g_hDll.P7_Trace_Register_Module
 Trace_Register_Module.restype  = c_void_p
@@ -141,6 +146,11 @@ Trace_Share.argtypes = [c_void_p, os_charp]
 #loading P7_Trace_Set_Verbosity function
 Trace_Set_Verbosity          = g_hDll.P7_Trace_Set_Verbosity
 Trace_Set_Verbosity.argtypes = [c_void_p, c_void_p, c_uint]
+
+#loading P7_Trace_Get_Verbosity function
+Trace_Get_Verbosity          = g_hDll.P7_Trace_Get_Verbosity
+Trace_Get_Verbosity.restype  = c_uint
+Trace_Get_Verbosity.argtypes = [c_void_p, c_void_p]
 
 #loading P7_Telemetry_Share function
 Trace_Add           = g_hDll.P7_Trace_Managed
@@ -233,13 +243,14 @@ class Telemetry:
         
     ##--------------------------------------------------------------------------
     #return counter ID, or -1 in case of error
-    def Create(self, i_sName, i_llMin, i_llMax, i_llAlarm, i_bOn):
-        l_bId  = c_ubyte(255);
+    def Create(self, i_sName, i_llMin, i_llAlarmMin, i_llMax, i_llAlarmMax, i_bOn):
+        l_bId  = c_ushort(65535);
         l_iRes = Telemetry_Create_Counter(self.m_hHandle,
                                           i_sName,
                                           i_llMin,
+                                          i_llAlarmMin,
                                           i_llMax,
-                                          i_llAlarm,
+                                          i_llAlarmMax,
                                           i_bOn,
                                           byref(l_bId)
                                          );
@@ -263,7 +274,7 @@ class Telemetry:
     ##--------------------------------------------------------------------------
     #return counter ID, or -1 in case of error
     def Find_Counter(self, i_sName):
-        l_bId  = c_ubyte(255);
+        l_bId  = c_ushort(65535);
         l_iRes = Telemetry_Find_Counter(self.m_hHandle,
                                         i_sName,
                                         byref(l_bId)
@@ -348,6 +359,11 @@ class Traces:
     ##--------------------------------------------------------------------------
     def Set_Verbosity(self, i_hModule, i_iLevel):
         Trace_Set_Verbosity(self.m_hHandle, i_hModule, i_iLevel);
+    #<<< Set_Verbosity    
+
+    ##--------------------------------------------------------------------------
+    def Get_Verbosity(self, i_hModule):
+        return Trace_Get_Verbosity(self.m_hHandle, i_hModule);
     #<<< Set_Verbosity    
 
     
@@ -542,7 +558,7 @@ def Get_Trace_Channel(i_sTraceName, i_sClientName = None):
 
     #creating new telemetry channel instance
     l_cReturn = None;
-    l_hTel    = Trace_Create(l_hClient, i_sTraceName)
+    l_hTel    = Trace_Create(l_hClient, i_sTraceName, 0)
     
     if l_hTel != None:
         Trace_Share(l_hTel, i_sTraceName);
@@ -564,6 +580,14 @@ def Get_Trace_Channel(i_sTraceName, i_sClientName = None):
 def Exceptional_Flush_Buffers():
     Exceptional_Flush();
 #<<<Exceptional_Flush_Buffers()
+
+
+################################################################################
+#>>>Flush_Buffers()
+def Flush_Buffers():
+    Flush();
+#<<<Flush_Buffers()
+
 
 ################################################################################
 #Register_Client("MyClient","/P7.Addr=127.0.0.1");

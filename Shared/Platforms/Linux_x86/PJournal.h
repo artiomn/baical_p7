@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -38,11 +38,11 @@ class CJournal
 {
     volatile tINT32    m_iRCnt;
     tLOCK              m_hCS;
-    tUINT64            m_pCount[IJournal::eLEVEL_COUNT] = {static_cast<IJournal::eLevel>(0UL)};
-    IJournal::eLevel   m_eVerbosity = static_cast<IJournal::eLevel>(0UL);
-    tUINT32            m_pLength = 0;
-    tXCHAR            *m_pBuffer = nullptr;
-    tXCHAR             m_pName[IJournal::eLEVEL_COUNT][16] = {0};
+    tUINT64            m_pCount[IJournal::eLEVEL_COUNT];
+    IJournal::eLevel   m_eVerbosity;
+    tUINT32            m_pLength;
+    tXCHAR            *m_pBuffer;
+    tXCHAR             m_pName[IJournal::eLEVEL_COUNT][16];
 public:
     ////////////////////////////////////////////////////////////////////////////
     CJournal()
@@ -127,6 +127,8 @@ public:
               ...
              )
     {
+        UNUSED_ARG(i_hModule);
+        UNUSED_ARG(i_pFile);
         tBOOL           l_bReturn = TRUE;
         time_t          l_tNow    = time(NULL);
         struct tm      *l_pTime   = localtime(&l_tNow);
@@ -217,18 +219,22 @@ public:
     ////////////////////////////////////////////////////////////////////////////
     tBOOL Register_Thread(const tXCHAR *i_pName, tUINT32 i_dwThreadId)
     {
+        UNUSED_ARG(i_pName);
+        UNUSED_ARG(i_dwThreadId);
         return FALSE;
     }
 
     ////////////////////////////////////////////////////////////////////////////
     tBOOL Unregister_Thread(tUINT32 i_dwThreadId)
     {
+        UNUSED_ARG(i_dwThreadId);
         return FALSE;
     }
 
     ////////////////////////////////////////////////////////////////////////////
     tBOOL Register_Module(const tXCHAR *i_pName, IJournal::hModule *o_hModule)
     {
+        UNUSED_ARG(i_pName);
         if (o_hModule)
         {
             *o_hModule = NULL;

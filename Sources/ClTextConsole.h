@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -39,6 +39,8 @@ public:
 
     virtual eClient_Status Initialize(tXCHAR **i_pArgs, tINT32 i_iCount)
     {
+        UNUSED_ARG(i_pArgs);
+        UNUSED_ARG(i_iCount);
         return ECLIENT_STATUS_OK;
     }
 
@@ -47,6 +49,8 @@ public:
                                size_t                   i_szFmtLog
                               )
     {
+        UNUSED_ARG(i_rRawLog);
+        UNUSED_ARG(i_szFmtLog);
     #ifdef UTF8_ENCODING
         printf("%s", i_pFmtLog);
     #else
@@ -55,6 +59,8 @@ public:
         printf("\n");
         return ECLIENT_STATUS_OK;
     }
+
+    virtual eClient_Status DumpBuffers() { return ECLIENT_STATUS_OK; }
 };
 
 

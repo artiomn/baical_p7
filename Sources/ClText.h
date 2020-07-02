@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -148,8 +148,6 @@ protected:
     CFormatter::sBuffer  *m_pBuffer;
     tBOOL                 m_bBig_Endian;
 
-
-
     //Time conversion for Linux
     //http://stackoverflow.com/questions/2408976/struct-timeval-to-printable-format
 public:
@@ -224,7 +222,6 @@ private:
 
     tBOOL              m_bBig_Endian;
 
-
     tUINT8            *m_pChunk;
     size_t             m_szChunkMax;
     size_t             m_szChunkUsd;
@@ -264,7 +261,8 @@ public:
                        );
 
     tBOOL          Get_Info(sP7C_Info *o_pInfo);
-    tBOOL          Flush();
+    tBOOL          Close();
+    void           Flush();
 
 private:
     eClient_Status Parse_Buffer(tUINT8 *i_pBuffer, size_t  i_szBuffer);

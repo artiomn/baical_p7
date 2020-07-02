@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -32,9 +32,11 @@
 //Independent
 #include "Common.h"
 
-#include "Socket.h"
+#include "UDP_NB.h"
 
 #include "PSystem.h"
+
+#include "Lock.h"
 
 #include "P7_Client.h"
 //because USER_PACKET_CHANNEL_ID_MAX_SIZE defined in "P7_Client.h".
@@ -49,5 +51,27 @@
 #include "P7_Trace.h"
 #include "P7_Extensions.h"
 
+
+////////////////////////////////////////////////////////////////////////////////
+//CUintList
+class CUintList
+    : public CListPool<tUINT32>
+{
+protected:
+    virtual tBOOL Data_Release(tUINT32 i_pData)
+    {
+        UNUSED_ARG(i_pData);
+        return TRUE;
+    }
+};
+
+struct sObjShared
+{
+    void    *pPointer;
+    tUINT32  uProcTimeHi;
+    tUINT32  uProcTimeLo;
+};
+
+extern "C" void __cdecl P7_Set_Last_Error(eP7_Error i_eError);
 
 #endif //COMMONCLIENT_H

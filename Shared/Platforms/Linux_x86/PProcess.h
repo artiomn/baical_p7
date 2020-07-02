@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -129,44 +129,59 @@ public:
     //Get_ArgV
     static tXCHAR **Get_ArgV(const tXCHAR *i_pCmdLine, tINT32 *o_pCount)
     {
-        tUINT16       l_wLen    = 0;//strlen(i_pCmdLine);
-        tXCHAR       *l_pBuffer = NULL;//new tXCHAR[l_wLen];
+        tINT32        l_iLen    = 0;//strlen(i_pCmdLine);
+        tXCHAR       *l_pBuffer = NULL;//new tXCHAR[l_iLen];
         tXCHAR      **l_pReturn = NULL;
         tBOOL         l_bNew    = TRUE;
+        tBOOL         l_bStr    = FALSE;
         tINT32        l_iIDX    = 0;
 
         if (    (NULL == i_pCmdLine)
-            || (NULL == o_pCount)    
+             || (NULL == o_pCount)    
         )
         {
             goto l_lblExit;
         }
 
-        l_wLen = strlen(i_pCmdLine) + 1;
-        l_pBuffer = new tXCHAR[l_wLen];
+        l_iLen = (tINT32)strlen(i_pCmdLine) + 1;
+        l_pBuffer = new tXCHAR[l_iLen];
 
         if (NULL == l_pBuffer)
         {
             goto l_lblExit;
         }
 
-        strcpy(l_pBuffer, i_pCmdLine);
-
-        for (tINT32 l_iI = 0; l_iI < l_wLen; l_iI++)
+        for (tINT32 l_iI = 0; l_iI < l_iLen; l_iI++)
         {
-            if (TM(' ') == l_pBuffer[l_iI])
+            if (TM('\"') == i_pCmdLine[l_iI])
             {
-                l_pBuffer[l_iI] = 0;
+                l_bStr = ! l_bStr;
             }
-        }    
+            else
+            {
+                if (    (TM(' ') == i_pCmdLine[l_iI])
+                     && (!l_bStr)
+                   )
+                {
+                    l_pBuffer[l_iIDX++] = 0;
+                }
+                else
+                {
+                    l_pBuffer[l_iIDX++] = i_pCmdLine[l_iI];
+                }
+                
+            }
+        }  
+
+        l_iLen = l_iIDX;
 
         //calculate count of items//////////////////////////////////////////////////
         *o_pCount = 0;
-        for (tINT32 l_iI = 0; l_iI < l_wLen; l_iI++)
+        for (tINT32 l_iI = 0; l_iI < l_iLen; l_iI++)
         {
             if (    (0 == l_pBuffer[l_iI])
-                || ((l_iI + 1) == l_wLen)    
-            )
+                 || ((l_iI + 1) == l_iLen)    
+               )
             {
                 (*o_pCount) ++;
             }
@@ -187,7 +202,8 @@ public:
 
         //fill result///////////////////////////////////////////////////////////////
         l_bNew = TRUE;
-        for (tINT32 l_iI = 0; l_iI < l_wLen; l_iI++)
+        l_iIDX = 0;
+        for (tINT32 l_iI = 0; l_iI < l_iLen; l_iI++)
         {
             if (l_bNew)
             {
@@ -204,7 +220,6 @@ public:
     l_lblExit:
 
         return l_pReturn;
-    //  return = CommandLineToArgvW(i_pCmdLine, o_pCount);
     }//Get_ArgV
 
 
@@ -359,46 +374,14 @@ public:
             goto l_lblExit;
         }
 
-        //printf((char*)l_pBuffer, 0);
-        //printf("\nLen = %d\n", l_iRead);
-
-        //printf("\n Len = %d, BTime = %lld, STime = %lld\n", 
-        //       l_iLen, 
-        //       l_llBtime, 
-        //       l_llStime
-        //      );
-
         //HZ defined in #include <asm/param.h>
-        l_llStime  = l_llBtime + (l_llStime / HZ);
-        l_llStime  = l_llStime * 10000000;
+        l_llStime  = l_llBtime * 10000000ull + (l_llStime * 10000000ull / HZ);
         l_llStime += TIME_OFFSET_1601_1970; //defined in "PTime.h"
 
         *o_pHTime = (l_llStime >> 32);
         *o_pLTime = (l_llStime & 0xFFFFFFFF);
 
         l_bResult = TRUE;
-
-        //{
-        //    time_t l_sTime = time(NULL);
-        //    struct tm *l_pTime = localtime(&l_sTime);;
-        //
-        //    printf("Current time: MM=%d DD=%d, HH=%d, MM=%d, SS=%d\n",
-        //            l_pTime->tm_mon,
-        //            l_pTime->tm_mday,
-        //            l_pTime->tm_hour,
-        //            l_pTime->tm_min,
-        //            l_pTime->tm_sec
-        //            );
-        //
-        //    l_pTime = localtime((time_t*)&l_llResult);
-        //    printf("Process Time: MM=%d DD=%d, HH=%d, MM=%d, SS=%d\n",
-        //            l_pTime->tm_mon,
-        //            l_pTime->tm_mday,
-        //            l_pTime->tm_hour,
-        //            l_pTime->tm_min,
-        //            l_pTime->tm_sec
-        //            );
-        //}
 
     l_lblExit:
         if (l_pBuffer)
@@ -408,21 +391,6 @@ public:
         }
 
         return l_bResult;
-
-        //FILETIME l_tProcess_Time = {0};
-        //FILETIME l_tStub_01      = {0};
-        //FILETIME l_tStub_02      = {0};
-        //FILETIME l_tStub_03      = {0};
-        //
-        //GetProcessTimes(GetCurrentProcess(), 
-        //                &l_tProcess_Time, 
-        //                &l_tStub_01,
-        //                &l_tStub_02,
-        //                &l_tStub_03
-        //                );
-        //
-        //*o_pHTime = l_tProcess_Time.dwHighDateTime,
-        //*o_pLTime = l_tProcess_Time.dwLowDateTime,
     }//Get_Process_Time()
 
 

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -23,11 +23,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 //Headers dependencies:
 #include <unistd.h>
-#include <fcntl.h>           /* For O_* constants */
+#include <fcntl.h>           // For O_* constants
 #include <semaphore.h>
 #include <sys/mman.h>
-#include <sys/stat.h>        /* For mode constants */
+#include <sys/stat.h>        // For mode constants
 
+#define SHARED_NAME_FORMAT_STRING "/P7_Type%d_PID%d_Text%s"
+#define SHARED_NAME_LEN           (strlen(SHARED_NAME_FORMAT_STRING) + 64)
+#define SHARED_SEM_NULL           SEM_FAILED
 
 ////////////////////////////////////////////////////////////////////////////////
 //CShared
@@ -38,6 +41,7 @@ class CShared
         int     iMFD;
         sem_t  *hSemaphore;
         size_t  szName;
+        char   *pName;
         char   *pSemName;
         char   *pMemName;
     };
@@ -51,6 +55,7 @@ class CShared
 
 public:
     typedef sShared *hShared;
+    typedef sem_t   *hSem;
 
     enum eLock
     {
@@ -92,15 +97,17 @@ public:
         }
 
         memset(l_pShared, 0, sizeof(sShared));
-        l_pShared->hSemaphore = SEM_FAILED;
+        l_pShared->hSemaphore = SHARED_SEM_NULL;
         l_pShared->iMFD       = -1;
 
-        l_pShared->szName    = strlen(i_pName) + 64;
+        l_pShared->szName    = strlen(i_pName) + SHARED_NAME_LEN;
+        l_pShared->pName     = strdup(i_pName);
         l_pShared->pSemName  = (char*)malloc(l_pShared->szName);
         l_pShared->pMemName  = (char*)malloc(l_pShared->szName);
 
         if (    (NULL == l_pShared->pSemName)
              || (NULL == l_pShared->pMemName)
+             || (NULL == l_pShared->pName)
            )
         {
             l_bResult = FALSE;
@@ -112,7 +119,7 @@ public:
         Create_Name(l_pShared->pSemName, l_pShared->szName, ETYPE_MUTEX, i_pName);
 
         l_pShared->hSemaphore = sem_open(l_pShared->pSemName, O_CREAT | O_EXCL, 0666, 0);
-        if (SEM_FAILED == l_pShared->hSemaphore)
+        if (SHARED_SEM_NULL == l_pShared->hSemaphore)
         {
             l_bResult  = FALSE;
             goto l_lblExit;
@@ -210,7 +217,7 @@ public:
             goto l_lblExit;
         }
 
-        l_szName = strlen(i_pName) + 64;
+        l_szName = strlen(i_pName) + SHARED_NAME_LEN;
         l_pName = (char*)malloc(l_szName);
 
         if (NULL == l_pName)
@@ -309,7 +316,7 @@ public:
             goto l_lblExit;
         }
 
-        l_szName = strlen(i_pName) + 64;
+        l_szName = strlen(i_pName) + SHARED_NAME_LEN;
         l_pName = (char*)malloc(l_szName);
 
         if (NULL == l_pName)
@@ -386,14 +393,16 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     //Lock
-    static eLock Lock(const tXCHAR  *i_pName, tUINT32 i_dwTimeout_ms)
+    static eLock Lock(const tXCHAR  *i_pName, CShared::hSem &o_rSem, tUINT32 i_dwTimeout_ms)
     {
         eLock       l_eReturn  = CShared::E_TIMEOUT;
         size_t      l_szName   = 0;
         char       *l_pName    = NULL;
         const int   l_i1ms     = 1000;
         tINT64      l_llWait   = (tINT64)i_dwTimeout_ms * 1000LL;
-        sem_t      *l_hSem     = SEM_FAILED;
+        sem_t      *l_hSem     = SHARED_SEM_NULL;
+
+        o_rSem = SHARED_SEM_NULL;
 
         if (NULL == i_pName)
         {
@@ -401,7 +410,7 @@ public:
             goto l_lblExit;
         }
 
-        l_szName = strlen(i_pName) + 64;
+        l_szName = strlen(i_pName) + SHARED_NAME_LEN;
         l_pName = (char*)malloc(l_szName);
 
         if (NULL == l_pName)
@@ -415,20 +424,8 @@ public:
         //open semaphore
         Create_Name(l_pName, l_szName, ETYPE_MUTEX, i_pName);
 
-        //check is it existing or not
-        l_hSem = sem_open(l_pName, O_CREAT | O_EXCL);
-        if (SEM_FAILED != l_hSem) //it wasn't existing = ERROR
-        {
-            sem_close(l_hSem);
-            sem_unlink(l_pName);
-            l_hSem = SEM_FAILED;
-
-            l_eReturn = CShared::E_NOT_EXISTS;
-            goto l_lblExit;
-        }
-
-        l_hSem = sem_open(l_pName, O_CREAT);
-        if (SEM_FAILED == l_hSem)
+        l_hSem = sem_open(l_pName, 0);
+        if (SHARED_SEM_NULL == l_hSem)
         {
             l_eReturn = CShared::E_NOT_EXISTS;
             goto l_lblExit;
@@ -457,10 +454,17 @@ public:
             l_pName = NULL;
         }
 
-        if (SEM_FAILED != l_hSem)
+        if (SHARED_SEM_NULL != l_hSem)
         {
-            sem_close(l_hSem);
-            l_hSem = SEM_FAILED;
+            if (CShared::E_OK == l_eReturn)
+            {
+                o_rSem = l_hSem;
+            }
+            else
+            {
+                sem_close(l_hSem);
+                l_hSem = SHARED_SEM_NULL;
+            }
         }
 
         return l_eReturn;
@@ -468,72 +472,39 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     //UnLock
-    static tBOOL UnLock(const tXCHAR  *i_pName)
+    static eLock UnLock(CShared::hSem &io_rSem)
     {
-        eLock       l_eReturn  = CShared::E_ERROR;
-        size_t      l_szName   = 0;
-        char       *l_pName    = NULL;
-        sem_t      *l_hSem     = SEM_FAILED;
+        eLock l_eReturn  = CShared::E_ERROR;
 
-        if (NULL == i_pName)
-        {
-            l_eReturn = CShared::E_ERROR;
-            goto l_lblExit;
-        }
-
-        l_szName = strlen(i_pName) + 64;
-        l_pName = (char*)malloc(l_szName);
-
-        if (NULL == l_pName)
-        {
-            l_eReturn = CShared::E_ERROR;
-            goto l_lblExit;
-        }
-
-
-        ////////////////////////////////////////////////////////////////////////
-        //open semaphore
-        Create_Name(l_pName, l_szName, ETYPE_MUTEX, i_pName);
-
-        //check is it existing or not
-        l_hSem = sem_open(l_pName, O_CREAT | O_EXCL);
-        if (SEM_FAILED != l_hSem) //it wasn't existing = ERROR
-        {
-            sem_close(l_hSem);
-            sem_unlink(l_pName);
-            l_hSem = SEM_FAILED;
-
-            l_eReturn = CShared::E_NOT_EXISTS;
-            goto l_lblExit;
-        }
-
-        l_hSem = sem_open(l_pName, O_CREAT);
-        if (SEM_FAILED == l_hSem)
+        if (SHARED_SEM_NULL == io_rSem)
         {
             l_eReturn = CShared::E_NOT_EXISTS;
             goto l_lblExit;
         }
 
-        if (0 == sem_post(l_hSem))
+        if (0 == sem_post(io_rSem))
         {
-            l_eReturn  = CShared::E_OK;
+            l_eReturn = CShared::E_OK;
         }
+
+        sem_close(io_rSem);
+        io_rSem = SHARED_SEM_NULL;
 
     l_lblExit:
-        if (l_pName)
-        {
-            free(l_pName);
-            l_pName = NULL;
-        }
-
-        if (SEM_FAILED != l_hSem)
-        {
-            sem_close(l_hSem);
-            l_hSem = SEM_FAILED;
-        }
-
         return l_eReturn;
     }//UnLock
+
+    ////////////////////////////////////////////////////////////////////////////
+    //GetSemName
+    static const tXCHAR* GetName(hShared i_pShared)
+    {
+        if (NULL == i_pShared)
+        {
+            return FALSE;
+        }
+
+        return i_pShared->pName;
+    }
 
 
     ////////////////////////////////////////////////////////////////////////////
@@ -545,29 +516,33 @@ public:
             return FALSE;
         }
 
-        if (SEM_FAILED != i_pShared->hSemaphore)
-        {
-            sem_wait(i_pShared->hSemaphore);
-        }
+        //if (SHARED_SEM_NULL != i_pShared->hSemaphore)
+        //{
+        //    sem_wait(i_pShared->hSemaphore);
+        //}
 
         if (0 <= i_pShared->iMFD)
         {
             close(i_pShared->iMFD);
             i_pShared->iMFD = -1;
+        }
+
+        if (i_pShared->pMemName)
+        {
             shm_unlink(i_pShared->pMemName);
         }
 
-        if (SEM_FAILED != i_pShared->hSemaphore)
+        if (SHARED_SEM_NULL != i_pShared->hSemaphore)
         {
             int l_iRes = -1;
             l_iRes = sem_close(i_pShared->hSemaphore);
-            l_iRes = sem_unlink(i_pShared->pSemName);
-            i_pShared->hSemaphore = SEM_FAILED;
+            i_pShared->hSemaphore = SHARED_SEM_NULL;
             UNUSED_ARG(l_iRes);
         }
 
         if (i_pShared->pSemName)
         {
+            sem_unlink(i_pShared->pSemName);
             free(i_pShared->pSemName);
             i_pShared->pSemName = NULL;
         }
@@ -578,6 +553,12 @@ public:
             i_pShared->pMemName = NULL;
         }
 
+        if (i_pShared->pName)
+        {
+            free(i_pShared->pName);
+            i_pShared->pName = NULL;
+        }
+
         i_pShared->szName = 0;
 
         free(i_pShared);
@@ -585,6 +566,50 @@ public:
 
         return TRUE;
     }//Close
+
+    ////////////////////////////////////////////////////////////////////////////
+    //UnLink
+    static tBOOL UnLink(const tXCHAR  *i_pName)
+    {
+        tBOOL    l_bReturn  = TRUE;
+        size_t   l_szName   = 0;
+        char    *l_pName    = NULL;
+
+        if (NULL == i_pName)
+        {
+            l_bReturn = FALSE;
+            goto l_lblExit;
+        }
+
+        l_szName = strlen(i_pName) + SHARED_NAME_LEN;
+        l_pName = (char*)malloc(l_szName);
+
+        if (NULL == l_pName)
+        {
+            l_bReturn = FALSE;
+            goto l_lblExit;
+        }
+
+        Create_Name(l_pName, l_szName, ETYPE_MUTEX, i_pName);
+        if (0 != sem_unlink(l_pName))
+        {
+            l_bReturn = FALSE;
+        }
+
+        Create_Name(l_pName, l_szName, ETYPE_FILE, i_pName);
+        if (0 != shm_unlink(l_pName))
+        {
+            l_bReturn = FALSE;
+        }
+
+    l_lblExit:
+        if (l_pName)
+        {
+            free(l_pName);
+            l_pName = NULL;
+        }
+        return l_bReturn;
+    }//UnLink
 
 private:
     ////////////////////////////////////////////////////////////////////////////
@@ -604,21 +629,7 @@ private:
             return FALSE;
         }
 
-        //GetProcessTimes(GetCurrentProcess(),
-        //                &l_tProcess_Time,
-        //                &l_tStub_01,
-        //                &l_tStub_02,
-        //                &l_tStub_03
-        //                );
-
-        if (ETYPE_MUTEX == i_eType)
-        {
-            snprintf(o_pName, i_szName, "/LAUS_%d_%s", getpid(), i_pPostfix);
-        }
-        else if (ETYPE_FILE == i_eType)
-        {
-            snprintf(o_pName, i_szName, "/LAUM_%d_%s", getpid(), i_pPostfix);
-        }
+        snprintf(o_pName, i_szName, SHARED_NAME_FORMAT_STRING, i_eType, getpid(), i_pPostfix);
 
         return TRUE;
     }//Create_Name

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -36,6 +36,7 @@ public:
     };
 
 public:
+    virtual tBOOL   IsOpened()                                              = 0;
     virtual tBOOL   Open(const tXCHAR *i_pName, tUINT32 i_dwFlags)          = 0;
     virtual tBOOL   Close(tBOOL i_bFlush)                                   = 0;
     virtual tBOOL   Set_Position(tUINT64 i_qwOffset)                        = 0;

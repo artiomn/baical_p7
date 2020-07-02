@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -39,6 +39,9 @@ class CClTextFile
         EROLLING_NONE,
         EROLLING_MEGABYTES,
         EROLLING_HOURS,
+        EROLLING_TIME,
+
+        EROLLING_MAX
     };
 
     CPFile             m_cFile;
@@ -49,10 +52,15 @@ class CClTextFile
     tUINT32            m_dwWrite_Tick;
     tUINT64            m_qwFile_Size;
     tUINT32            m_dwFiles_Max_Count;
+    tUINT64            m_qwFiles_Max_Size;
     CBList<CWString*>  m_cFiles;
     tXCHAR            *m_pBuffer;
     size_t             m_szBuffer;
     size_t             m_szBufferOffs;
+    CUintList          m_cSecondsList;
+    tUINT32            m_uiSecond;
+    tUINT32            m_dwIndex;
+
 
 public:
     ////////////////////////////////////////////////////////////////////////////
@@ -64,11 +72,14 @@ public:
         , m_dwWrite_Tick(0ull)
         , m_qwFile_Size(0ull)
         , m_dwFiles_Max_Count(0u)
+        , m_qwFiles_Max_Size(0u)
         , m_pBuffer(NULL)
         , m_szBuffer(0x10000)
         , m_szBufferOffs(0)
+        , m_dwIndex(0)
     {
         m_dwWrite_Tick = GetTickCount();
+        m_uiSecond     = GetSecondOfDay(); 
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -85,6 +96,8 @@ public:
             m_pBuffer = NULL;
         }
         m_szBufferOffs = 0;
+
+        m_cSecondsList.Clear(TRUE);
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -103,14 +116,15 @@ public:
         {
             PRINTF(TM("P7:Can't allocate memory\n"));
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
+            P7_Set_Last_Error(eP7_Error_MemoryAllocation);
             goto l_lblExit;
         }
 
         //unicode marker
     #ifdef UTF8_ENCODING
-        m_pBuffer[0]   = 0xEF;
-        m_pBuffer[1]   = 0xBB;
-        m_pBuffer[2]   = 0xBF;
+        m_pBuffer[0]   = (char)0xEF;
+        m_pBuffer[1]   = (char)0xBB;
+        m_pBuffer[2]   = (char)0xBF;
         m_szBufferOffs = 3;
         m_qwFile_Size  = 3;
     #else
@@ -122,7 +136,7 @@ public:
         ////////////////////////////////////////////////////////////////////////////
         //get maximum count of the log files
         l_pArgV = Get_Argument_Text_Value(i_pArgs, i_iCount,
-                                          (tXCHAR*)CLIENT_COMMAND_LINE_FILES_MAX
+                                          (tXCHAR*)CLIENT_COMMAND_LINE_FILES_COUNT_MAX
                                          );
         if (l_pArgV)
         {
@@ -133,6 +147,16 @@ public:
                 m_dwFiles_Max_Count = TXT_FILE_DEF_FILES_COUNT;
             }
         }
+
+
+        l_pArgV = Get_Argument_Text_Value(i_pArgs, i_iCount,
+                                          (tXCHAR*)CLIENT_COMMAND_LINE_FILES_SIZE_MAX
+                                         );
+        if (l_pArgV)
+        {
+            m_qwFiles_Max_Size = (tUINT64)PStrToInt(l_pArgV) * 1048576ull;
+        }
+
 
         ////////////////////////////////////////////////////////////////////////////
         //get path to storage
@@ -153,6 +177,7 @@ public:
         {
             if (FALSE == CFSYS::Directory_Create(m_pDir.Get()))
             {
+                P7_Set_Last_Error(eP7_Error_FolderCreation);
                 PRINTF(TM("P7:Can't create directory: %s\n"), l_pArgV);
                 l_eReturn = ECLIENT_STATUS_NOT_ALLOWED;
                 goto l_lblExit;
@@ -161,7 +186,9 @@ public:
 
         ////////////////////////////////////////////////////////////////////////////
         //enumerate files & sorting ....
-        if (TXT_FILE_DEF_FILES_COUNT != m_dwFiles_Max_Count)
+        if (    (TXT_FILE_DEF_FILES_COUNT != m_dwFiles_Max_Count)
+             || (m_qwFiles_Max_Size)
+           )
         {
             CFSYS::Enumerate_Files(&m_cFiles, &m_pDir, TM("*.") TXT_FILE_EXT, 0);
 
@@ -200,6 +227,7 @@ public:
         l_eReturn = Create_File();
         if (ECLIENT_STATUS_OK != l_eReturn)
         {
+            P7_Set_Last_Error(eP7_Error_FileCreation);
             PRINTF(TM("P7:File creation failed"));
             goto l_lblExit;
         }
@@ -227,6 +255,10 @@ public:
                 {
                     m_eRolling = EROLLING_MEGABYTES;
                 }
+                else if (0 == PStrICmp(l_pSuffix, TM("tm")))
+                {
+                    m_eRolling = EROLLING_TIME;
+                }
                 else
                 {
                     l_bError = TRUE;
@@ -242,11 +274,23 @@ public:
 
             if (FALSE == l_bError)
             {
-                m_qwRolling_Value = PStrToInt(l_cRolling.Get());
-
-                if (0 >= m_qwRolling_Value)
+                if (m_eRolling != EROLLING_TIME)
                 {
-                    m_eRolling = EROLLING_NONE;
+                    m_qwRolling_Value = PStrToInt(l_cRolling.Get());
+
+                    if (0 >= m_qwRolling_Value)
+                    {
+                        m_eRolling = EROLLING_NONE;
+                        l_bError   = TRUE;
+                    }
+                }
+                else
+                {
+                    if (!Parse_Rolling_Time(l_cRolling.Get()))
+                    {
+                        m_eRolling = EROLLING_NONE;
+                        l_bError   = TRUE;
+                    }
                 }
             }
 
@@ -275,6 +319,80 @@ public:
         return l_eReturn;
     }
 
+
+    ////////////////////////////////////////////////////////////////////////////////
+    //Parse_Rolling_Time
+    tBOOL Parse_Rolling_Time(const tXCHAR *i_pTime)
+    {
+        const tXCHAR *l_pIter   = i_pTime;
+        const tXCHAR *l_pBegin  = i_pTime;
+        tBOOL         l_bReturn = TRUE;
+
+        while (*l_pIter)
+        {
+            tUINT32 l_uiSeconds = 0;
+            tUINT32 l_uiValue   = 0;
+
+            l_pBegin = l_pIter; //scan hours
+            while (    (*l_pIter >= TM('0')) 
+                    && (*l_pIter <= TM('9'))
+                    )
+            {
+                l_uiValue = l_uiValue * 10 + (*l_pIter - TM('0'));
+                l_pIter ++;
+            }
+
+            if (l_pBegin == l_pIter) //no digits
+            {
+                l_bReturn = FALSE;
+                break;
+            }
+
+            l_uiSeconds = l_uiValue * 3600; 
+                    
+            if (*l_pIter != TM(':')) //error
+            {
+                l_bReturn = FALSE;
+                break;
+            }
+
+            l_pIter++;
+
+            l_pBegin  = l_pIter; //scan minutes
+            l_uiValue = 0;
+            while (    (*l_pIter >= TM('0'))
+                    && (*l_pIter <= TM('9'))
+                    )
+            {
+                l_uiValue = l_uiValue * 10 + (*l_pIter - TM('0'));
+                l_pIter ++;
+            }
+
+            if (l_pBegin == l_pIter) //no digits
+            {
+                l_bReturn = FALSE;
+                break;
+            }
+
+            l_uiSeconds += l_uiValue * 60; 
+
+            m_cSecondsList.Add_After(m_cSecondsList.Get_Last(), l_uiSeconds);
+
+            if (*l_pIter == TM(','))
+            {
+                l_pIter++;
+            }
+        }
+
+        if (!m_cSecondsList.Count())
+        {
+            l_bReturn = FALSE;
+        }
+
+        return l_bReturn;
+    }//Parse_Rolling_Time
+
+
     ////////////////////////////////////////////////////////////////////////////
     //Log
     virtual eClient_Status Log(const CClTextSink::sLog &i_rRawLog, 
@@ -282,6 +400,7 @@ public:
                                size_t                   i_szFmtLog
                               )
     {
+        UNUSED_ARG(i_rRawLog);
         if (    ((i_szFmtLog + 16) > (m_szBuffer - m_szBufferOffs))
              || (CTicks::Difference(GetTickCount(), m_dwWrite_Tick) >= TXT_FILE_WRITE_PERIOD)
            )
@@ -300,12 +419,16 @@ public:
                 *(m_pBuffer + 1) = TM('\n');
                 m_szBufferOffs  += 2;
 
+                TryRoll();
+
                 return ECLIENT_STATUS_OK;
             }
             else
             {
                 m_cFile.Write((tUINT8*)m_pBuffer, m_szBufferOffs * sizeof(tXCHAR), FALSE);
                 m_szBufferOffs = 0;
+
+                TryRoll();
             }
 
             m_dwWrite_Tick = GetTickCount();
@@ -318,6 +441,13 @@ public:
         m_szBufferOffs += 2;
         m_qwFile_Size  += (i_szFmtLog + 2) * sizeof(tXCHAR);
 
+        return ECLIENT_STATUS_OK;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // TryRoll                                      
+    eClient_Status TryRoll()
+    {
         if (   (    (EROLLING_HOURS == m_eRolling)
                  && (CTicks::Difference(GetTickCount(), m_dwFile_Tick) > m_qwRolling_Value)
                )
@@ -325,19 +455,44 @@ public:
                  && (m_qwRolling_Value <= m_qwFile_Size)
                )
            )
-        
         {
-            m_cFile.Write((tUINT8*)m_pBuffer, m_szBufferOffs * sizeof(tXCHAR), FALSE);
-            m_cFile.Close(TRUE);
-            m_qwFile_Size  = 0ull;
-            m_szBufferOffs = 0u;
-            Create_File();
-            m_dwWrite_Tick = GetTickCount();
+            Roll();
+        }
+        else if (EROLLING_TIME == m_eRolling)
+        {
+            tUINT32     l_uiNextSecond = GetSecondOfDay(); 
+            pAList_Cell l_pEl          = NULL;
+
+            while ((l_pEl = m_cSecondsList.Get_Next(l_pEl)))
+            {
+                tUINT32 l_uiIem = m_cSecondsList.Get_Data(l_pEl);
+                if (    (m_uiSecond <= l_uiIem)
+                     && (l_uiNextSecond > l_uiIem)
+                   )
+                {
+                    Roll();
+                    break;
+                }
+            }
+
+            m_uiSecond = l_uiNextSecond;
         }
 
-        return ECLIENT_STATUS_OK;
-    }
+        return ECLIENT_STATUS_OK; 
+    }// TryRoll
 
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Roll                                      
+    void Roll()
+    {
+        m_cFile.Write((tUINT8*)m_pBuffer, m_szBufferOffs * sizeof(tXCHAR), TRUE);
+        m_cFile.Close(TRUE);
+        m_qwFile_Size  = 0ull;
+        m_szBufferOffs = 0u;
+        Create_File();
+        m_dwWrite_Tick = GetTickCount();
+    }// Roll
 
     ////////////////////////////////////////////////////////////////////////////
     // Create_File                                      
@@ -369,20 +524,20 @@ public:
         {
             PSPrint(l_pFile_Name, 
                     LENGTH(l_pFile_Name), 
-                    TM("/%04d%02d%02d-%02d%02d%02d%02d.") TXT_FILE_EXT,
+                    TM("/%04d%02d%02d-%02d%02d%02d%03d.") TXT_FILE_EXT,
                     l_dwYear, 
                     l_dwMonth,
                     l_dwDay,
                     l_dwHr,
                     l_dwMin,
                     l_dwSec,
-                    l_dwmSec
+                    m_dwIndex
                    );
 
             l_cFilePath.Set(m_pDir.Get());
             l_cFilePath.Append(1, l_pFile_Name);
 
-            l_dwmSec ++;
+            m_dwIndex ++;
         } while (TRUE == CFSYS::File_Exists(l_cFilePath.Get()));
 
         if (FALSE == m_cFile.Open(l_cFilePath.Get(), 
@@ -393,23 +548,68 @@ public:
             PRINTF(TM("P7:Can't create file: %s"), l_cFilePath.Get());
             l_eReturn = ECLIENT_STATUS_INTERNAL_ERROR;
         }
-        else if (TXT_FILE_DEF_FILES_COUNT != m_dwFiles_Max_Count)
+        else 
         {
             m_cFiles.Add_After(m_cFiles.Get_Last(), new CWString(l_cFilePath.Get()));
 
-            while (m_dwFiles_Max_Count < m_cFiles.Count())
+            if (TXT_FILE_DEF_FILES_COUNT != m_dwFiles_Max_Count)
             {
-                pAList_Cell l_pEl   = m_cFiles.Get_First();
-                CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
-                if (l_pPath)
+                while (m_dwFiles_Max_Count < m_cFiles.Count())
                 {
-                    if (!CFSYS::Delete_File(l_pPath->Get()))
+                    pAList_Cell l_pEl   = m_cFiles.Get_First();
+                    CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
+                    if (l_pPath)
                     {
-                        PRINTF(TM("P7:Can't delete file: %s"), l_pPath->Get());
+                        if (!CFSYS::Delete_File(l_pPath->Get()))
+                        {
+                            PRINTF(TM("P7:Can't delete file: %s"), l_pPath->Get());
+                        }
+                    }
+
+                    m_cFiles.Del(l_pEl, TRUE);
+                }
+            }
+
+            if (0 != m_qwFiles_Max_Size)
+            {
+                pAList_Cell l_pEl = NULL;
+                tUINT64     l_qwTotalSize = 0;
+                tUINT64     l_qwFileSize = 0;
+
+                while ((l_pEl = m_cFiles.Get_Next(l_pEl)))
+                {
+                    CWString *l_pPath = m_cFiles.Get_Data(l_pEl);
+                    if (l_pPath)
+                    {
+                        l_qwTotalSize += CFSYS::Get_File_Size(l_pPath->Get());
                     }
                 }
 
-                m_cFiles.Del(l_pEl, TRUE);
+                while (l_qwTotalSize > (m_qwFiles_Max_Size))
+                {
+                    pAList_Cell l_pEl   = m_cFiles.Get_First();
+                    CWString   *l_pPath = m_cFiles.Get_Data(l_pEl);
+                    if (l_pPath)
+                    {
+                        l_qwFileSize = CFSYS::Get_File_Size(l_pPath->Get());
+
+                        if (l_qwFileSize < l_qwTotalSize)
+                        {
+                            l_qwTotalSize -= l_qwFileSize;
+                        }
+                        else
+                        {
+                            l_qwTotalSize = 0ull;
+                        }
+
+                        if (!CFSYS::Delete_File(l_pPath->Get()))
+                        {
+                            PRINTF(TM("Can't delete file: %s"), l_pPath->Get());
+                        }
+                    }
+
+                    m_cFiles.Del(l_pEl, TRUE);
+                }
             }
         }
 
@@ -417,6 +617,18 @@ public:
 
         return l_eReturn;
     }// Create_File
+
+    virtual eClient_Status DumpBuffers()
+    {
+        if (m_szBufferOffs)
+        {
+            m_cFile.Write((tUINT8*)m_pBuffer, m_szBufferOffs * sizeof(tXCHAR), TRUE);
+            m_szBufferOffs = 0;
+        }
+
+        return ECLIENT_STATUS_OK;
+    }
+
 };
 
 #endif //CLTEXTFILE_H

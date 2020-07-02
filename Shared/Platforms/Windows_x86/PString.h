@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -45,6 +45,31 @@ static inline tXCHAR* PStrCpy(tXCHAR       *i_pDst,
                               )
 {
     wcscpy_s((wchar_t*)i_pDst, i_szDst, (wchar_t*)i_pSrc);
+    return i_pDst;
+}//PStrLen
+
+
+////////////////////////////////////////////////////////////////////////////////
+//PWStrCpy
+static inline tXCHAR* PWStrCpy(tWCHAR       *i_pDst,
+                               size_t        i_szDst,
+                               const tWCHAR *i_pSrc
+                              )
+{
+    wcscpy_s((wchar_t*)i_pDst, i_szDst, (wchar_t*)i_pSrc);
+    return i_pDst;
+}//PWStrCpy
+
+
+////////////////////////////////////////////////////////////////////////////////
+//PStrCpy
+static inline tXCHAR* PStrNCpy(tXCHAR       *i_pDst,
+                              size_t        i_szDst,
+                              const tXCHAR *i_pSrc,
+                              size_t        i_pSrcMaxCount
+                              )
+{
+    wcsncpy_s((wchar_t*)i_pDst, i_szDst, (wchar_t*)i_pSrc, i_pSrcMaxCount);
     return i_pDst;
 }//PStrLen
 
@@ -190,6 +215,13 @@ static inline tXCHAR *PStrChr(tXCHAR * i_pStr, tXCHAR i_cCh)
 ///////////////////////////////////////////////////////////////////////////////
 //PStrrChr
 static inline tXCHAR *PStrrChr(tXCHAR * i_pStr, tXCHAR i_cCh)
+{
+    return wcsrchr(i_pStr, i_cCh);
+}//PStrrChr
+
+///////////////////////////////////////////////////////////////////////////////
+//PStrrChr
+static inline const tXCHAR *PStrrChr(const tXCHAR * i_pStr, const tXCHAR i_cCh)
 {
     return wcsrchr(i_pStr, i_cCh);
 }//PStrrChr

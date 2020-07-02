@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -27,6 +27,7 @@
 #include "PFile.h"
 
 
+////////////////////////////////////////////////////////////////////////////////
 class CClFile:
     public CClient
 {
@@ -57,7 +58,8 @@ protected:
     {
         EROLLING_NONE,
         EROLLING_MEGABYTES,
-        EROLLING_HOURS
+        EROLLING_HOURS,
+        EROLLING_TIME
     };
 
 private:
@@ -82,7 +84,10 @@ private:
     tUINT32            m_dwFile_Tick;
     tUINT64            m_qwFile_Size;
     tUINT32            m_dwFiles_Max_Count;
+    tUINT64            m_qwFiles_Max_Size;
     CBList<CWString*>  m_cFiles;
+    CUintList          m_cSecondsList;
+    tUINT32            m_dwIndex;
 
 public:
     CClFile(tXCHAR **i_pArgs,
@@ -104,10 +109,12 @@ private:
                             );
 
     eClient_Status Init_Thread(tXCHAR **i_pArgs,
-                                tINT32   i_iCount
-                               );
+                               tINT32   i_iCount
+                              );
 
     eClient_Status Create_File();
+
+    tBOOL          Parse_Rolling_Time(const tXCHAR *i_pTime);
 
 public:
     eClient_Status Sent(tUINT32            i_dwChannel_ID,
@@ -117,7 +124,9 @@ public:
                        );
 
     tBOOL          Get_Info(sP7C_Info *o_pInfo);
-    tBOOL          Flush();
+    tBOOL          Close();
+    void           Flush();
+
 
 private:
     void  Roll();

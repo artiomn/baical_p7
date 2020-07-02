@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -238,6 +238,7 @@ struct sData_Block
 class CP7Trace_Desc
 {
     tUINT16        m_wID;
+    tUINT16        m_wModuleID;
     //count of connections drops... see sP7C_Status. If this value and 
     //value from IP7_Client are different - it mean we loose connection
     tUINT32        m_dwResets; 
@@ -260,6 +261,7 @@ public:
                   const char     *i_pFile,
                   const char     *i_pFunction,
                   const tXCHAR  **i_pFormat,
+                  tKeyType        i_pKeys[P7TRACE_KEY_LENGTH],
                   tUINT32         i_dwFlags
                  );
 
@@ -285,6 +287,7 @@ public:
     tBOOL    Is_Greater(tKeyType *i_pKey);
 
     tUINT16  Get_ID();
+    tUINT16  Get_MID();
 };//CP7Trace_Desc
 
 
@@ -305,6 +308,7 @@ protected:
     //////////////////////////////////////////////////////////////////////////// 
     virtual tBOOL Data_Release(CP7Trace_Desc* i_pData)
     {
+        UNUSED_ARG(i_pData);
         return TRUE; //memory used from pool, not necessary to return
     }// Data_Release
 
@@ -391,9 +395,8 @@ protected:
 #define P7_TRACE_DESC_HARDCODED_COUNT                                     (1024)
 
 
-class CP7Trace:
-    public IP7C_Channel
-   ,public IP7_Trace
+class CP7Trace
+    : public IP7_Trace
 {
     struct sStack_Desc
     {
@@ -436,10 +439,12 @@ class CP7Trace:
     tLOCK              m_sCS; 
     tUINT32            m_dwLast_ID;
     tBOOL              m_bInitialized;
+    tBOOL              m_bActive;
     eP7Trace_Level     m_eVerbosity;
                       
     sP7Trace_Info      m_sHeader_Info;
     sP7Trace_Data      m_sHeader_Data;
+    sP7Trace_Utc_Offs  m_sHeader_Utc;
                       
     sP7C_Status        m_sStatus;
                       
@@ -465,6 +470,8 @@ class CP7Trace:
     tUINT8            *m_pVargs;
     size_t             m_szVargs;
 
+    tUINT8             m_pExtensions[4];
+
     stTrace_Conf       m_sConf;
 
 public:
@@ -475,8 +482,9 @@ public:
 
     tBOOL Is_Initialized();
 
+    IP7C_Channel::eType Get_Type() { return IP7C_Channel::eTrace; }
     void  On_Init(sP7C_Channel_Info *i_pInfo);
-    void  On_Receive(tUINT32 i_dwChannel, tUINT8 *i_pBuffer, tUINT32 i_dwSize);
+    void  On_Receive(tUINT32 i_dwChannel, tUINT8 *i_pBuffer, tUINT32 i_dwSize, tBOOL i_bBigEndian);
     void  On_Status(tUINT32 i_dwChannel, const sP7C_Status *i_pStatus);
     void  On_Flush(tUINT32 i_dwChannel, tBOOL *io_pCrash);
 
@@ -486,6 +494,8 @@ public:
     tBOOL Register_Module(const tXCHAR *i_pName, IP7_Trace::hModule *o_hModule);
 
     void  Set_Verbosity(IP7_Trace::hModule i_hModule, eP7Trace_Level i_eVerbosity);
+    eP7Trace_Level Get_Verbosity(IP7_Trace::hModule i_hModule);
+
 
     tBOOL Trace(tUINT16            i_wTrace_ID,   
                 eP7Trace_Level     i_eLevel, 

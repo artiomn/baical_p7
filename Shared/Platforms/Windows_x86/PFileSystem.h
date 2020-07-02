@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                             /
-// 2012-2017 (c) Baical                                                        /
+// 2012-2020 (c) Baical                                                        /
 //                                                                             /
 // This library is free software; you can redistribute it and/or               /
 // modify it under the terms of the GNU Lesser General Public                  /
@@ -17,6 +17,10 @@
 //                                                                             /
 ////////////////////////////////////////////////////////////////////////////////
 #pragma once
+
+#pragma warning(disable : 4091)
+
+#include "Shlobj.h"
 
 class CFSYS
 {
@@ -56,13 +60,14 @@ public:
         }
 
         wchar_t *l_pDirectory = _wcsdup(i_pDirectory);
-        size_t   l_szLength   = wcslen(l_pDirectory);
         tBOOL    l_bReturn    = FALSE;
 
         if (NULL == l_pDirectory)
         {
             return FALSE;
         }
+
+        size_t l_szLength = wcslen(l_pDirectory);
 
         for (size_t l_dwI = 3; /*wcslen(L"C:\\")*/ l_dwI < l_szLength; l_dwI++)
         {
@@ -89,6 +94,17 @@ public:
         return l_bReturn;
     }//Directory_Create
 
+    ////////////////////////////////////////////////////////////////////////////
+    //Directory_Delete
+    static BOOL Directory_Delete(const wchar_t *i_pDirectory)
+    {
+        if (NULL == i_pDirectory)
+        {
+            return FALSE;
+        }
+
+        return RemoveDirectoryW(i_pDirectory);
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     //File_Exists
@@ -119,7 +135,7 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     // Enumerate_Files
-    static void Enumerate_Files(CBList<CWString*> *i_pDll_List, 
+    static void Enumerate_Files(CBList<CWString*> *io_pFilesList, 
                                 CWString          *i_pDirectory,
                                 const wchar_t     *i_pMask, //for example L"*.dll"
                                 DWORD              i_dwDepth = 0xFFFFFF
@@ -142,12 +158,12 @@ public:
         {
             if (0 == (l_sFind_Info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
             {
-                CWString *i_pFile = new CWString();
-                if (i_pFile)
+                CWString *l_pFile = new CWString();
+                if (l_pFile)
                 {
-                    i_pFile->Set(i_pDirectory->Get());
-                    i_pFile->Append(2, L"\\", l_sFind_Info.cFileName);
-                    i_pDll_List->Add_After(i_pDll_List->Get_Last(), i_pFile);
+                    l_pFile->Set(i_pDirectory->Get());
+                    l_pFile->Append(2, L"\\", l_sFind_Info.cFileName);
+                    io_pFilesList->Add_After(io_pFilesList->Get_Last(), l_pFile);
                 }
             }
 
@@ -176,7 +192,7 @@ public:
                    )
                 {
                     i_pDirectory->Append(2, L"\\", l_sFind_Info.cFileName);
-                    Enumerate_Files(i_pDll_List, i_pDirectory, i_pMask, i_dwDepth - 1);
+                    Enumerate_Files(io_pFilesList, i_pDirectory, i_pMask, i_dwDepth - 1);
                     i_pDirectory->Trim(l_dwLength);
                 }
 
@@ -188,6 +204,93 @@ public:
             } //while(INVALID_HANDLE_VALUE != hFind)
         }
     }// Enumerate_Files
+
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Enumerate_Dirs
+    static void Enumerate_Dirs(CBList<CWString*> *io_pFilesList, const tXCHAR *i_pRoot)
+    {
+        WIN32_FIND_DATAW l_sFind_Info = {0};
+        HANDLE           l_hFind      = INVALID_HANDLE_VALUE;
+
+        if (!io_pFilesList)
+        {
+            return;
+        }
+        
+        if (    (i_pRoot)
+             && (*i_pRoot)
+           )
+        {
+            CWString l_cSearch_Path;
+
+
+            //**************************************************************************
+            // Enumerate all files in current directory
+            l_cSearch_Path.Set(i_pRoot);
+            l_cSearch_Path.Append(1, L"\\*");
+
+            l_hFind = FindFirstFileW(l_cSearch_Path.Get(), &l_sFind_Info);
+
+            while(INVALID_HANDLE_VALUE != l_hFind)
+            {
+                if (    (0 != (l_sFind_Info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) 
+                     && (0 != wcscmp(l_sFind_Info.cFileName, L".")) 
+                     && (0 != wcscmp(l_sFind_Info.cFileName, L".."))
+                   )
+                {
+                    CWString *l_pFile = new CWString();
+                    if (l_pFile)
+                    {
+                        l_pFile->Set(i_pRoot);
+                        l_pFile->Append(2, L"\\", l_sFind_Info.cFileName);
+                        io_pFilesList->Add_After(io_pFilesList->Get_Last(), l_pFile);
+                    }
+                }
+
+                if (! FindNextFileW(l_hFind, &l_sFind_Info))
+                {
+                    FindClose(l_hFind);
+                    l_hFind = INVALID_HANDLE_VALUE;
+                }
+            } //while(INVALID_HANDLE_VALUE != hFind)
+        }
+        else
+        {
+            DWORD   l_dwDrives = GetLogicalDrives();
+            DWORD   l_dwBit    = 0;
+            tXCHAR  l_pDrive[4];
+
+            l_pDrive[0] = TM('A');
+            l_pDrive[1] = TM(':');
+            l_pDrive[2] = TM('\\');
+            l_pDrive[3] = 0;
+
+            while (l_dwDrives)
+            {
+                if (l_dwDrives & 1)
+                {
+                    l_pDrive[0] = (tXCHAR)(l_dwBit + TM('A'));
+
+                    UINT l_uiType = GetDriveTypeW(l_pDrive);
+                    if (    (DRIVE_UNKNOWN != l_uiType)
+                         && (DRIVE_NO_ROOT_DIR != l_uiType)
+                       )
+                    {
+                        CWString *l_pFile = new CWString();
+                        if (l_pFile)
+                        {
+                            l_pFile->Set(l_pDrive);
+                            io_pFilesList->Add_After(io_pFilesList->Get_Last(), l_pFile);
+                        }
+                    }
+                }
+
+                l_dwDrives = l_dwDrives >> 1;
+                l_dwBit ++;
+            }
+        }
+    }// Enumerate_Dirs
 
 
     ////////////////////////////////////////////////////////////////////////////
@@ -250,10 +353,10 @@ public:
 
     ////////////////////////////////////////////////////////////////////////////
     //Get_TextResource
-    static tBOOL Get_TextResource(const wchar_t *i_pFile,
-                                  const wchar_t *i_pName,
-                                  wchar_t       *o_pBuffer,
-                                  size_t         i_szBuffer
+    static tBOOL Get_TextResource(const tXCHAR *i_pFile,
+                                  const tXCHAR *i_pName,
+                                  tXCHAR       *o_pBuffer,
+                                  size_t        i_szBuffer
                                  )
     {
         tBOOL        l_bReturn        = FALSE;
@@ -440,6 +543,76 @@ public:
         SetFileAttributesW(i_pFile_Name, l_dwFAttr);
         return DeleteFileW(i_pFile_Name);
     }//Delete_File
+
+
+    ////////////////////////////////////////////////////////////////////////////
+    //GetUserDirectory
+    static tBOOL GetUserDirectory(CWString *o_pPath)
+    {
+        if (    (NULL == o_pPath)
+             || (FALSE == o_pPath->Realloc(4096))
+           )
+        {
+            return TRUE;
+        }
+
+        if ( S_OK != SHGetFolderPathW(NULL, CSIDL_PERSONAL | CSIDL_FLAG_CREATE, NULL, 0, o_pPath->Get()))
+        {
+            return FALSE;
+        }
+
+        return TRUE;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    //GetUserDirectory
+    static tBOOL GetDirectoryParent(CWString &i_rChild, CWString &o_rParent)
+    {
+        o_rParent.Set(i_rChild.Get());
+        size_t  l_szDir = o_rParent.Length();
+        tXCHAR *l_pDir  = o_rParent.Get();
+
+        //cut trailing '/' or '\'
+        while (    (l_szDir)
+                && (    (TM('\\') == l_pDir[l_szDir - 1])
+                     || (TM('/') == l_pDir[l_szDir - 1])
+                   )
+              )
+        {
+            l_pDir[--l_szDir] = 0;
+        }
+
+        tXCHAR *l_pTemp = wcsrchr(l_pDir, TM('\\'));
+        if (!l_pTemp)
+        {
+            l_pTemp = wcsrchr(l_pDir, TM('/'));
+        }
+
+        if (!l_pTemp)
+        {
+            o_rParent.Set(TM(""));
+            return TRUE;
+        }
+
+        *l_pTemp = 0;
+        l_pTemp--;
+        //removing duplicates of '\' '/'
+        while (    (TM('\\') == *l_pTemp)
+                || (TM('/') == *l_pTemp)
+              )
+        {
+            *l_pTemp = 0;
+            l_pTemp--;
+
+            if (l_pDir > l_pTemp)
+            {
+                break;
+            }
+        }
+
+        return TRUE;
+    }
+
 };
 
 
